@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 from threading import Thread
 
-API_TOKEN = "7748542247:AAGVgKPaOvHH7iDL4Uei2hM_zsI_6gCowkM"
+API_TOKEN = "7748542247:AAH5IwyoUuYdtZwsJ-woqKQ6XZJteX7L2EQ"
 ADMIN_ID = 6927494520
 CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
 
