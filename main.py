@@ -7,8 +7,8 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ==== МЫНАНЫ ӨЗІҢЕ АУЫСТЫР 👇 ====
-API_TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_ID = 123456789  # өзіңнің Telegram ID-ді жаз
+API_TOKEN = "7748542247:AAH5IwyoUuYdtZwsJ-woqKQ6XZJteX7L2EQ"
+ADMIN_ID = 6927494520  # өзіңнің Telegram ID-ді жаз
 CHANNELS = ["@oqigalaruyatsiz", "@Qazhuboyndar"]
 # =================================
 
