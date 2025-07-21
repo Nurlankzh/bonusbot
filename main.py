@@ -6,17 +6,16 @@ from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# ==== МЫНАНЫ ӨЗІҢЕ АУЫСТЫР 👇 ====
-API_TOKEN = "7748542247:AAH5IwyoUuYdtZwsJ-woqKQ6XZJteX7L2EQ"
-ADMIN_ID = 6927494520  # өзіңнің Telegram ID-ді жаз
-CHANNELS = ["@oqigalaruyatsiz", "@Qazhuboyndar"]
-# =================================
+# =================== НАСТРОЙКАЛАР ===================
+API_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # 🔥 Мына жерге ЖАҢА ТОКЕН қойыңыз
+ADMIN_ID = 6927494520  # 🔥 сіз берген айдй
+CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# ======== БАЗА ИНИЦИАЛИЗАЦИЯ ========
+# =================== БАЗА ===================
 async def init_db():
     async with aiosqlite.connect("bot.db") as db:
         await db.execute("""
@@ -67,7 +66,7 @@ async def is_subscribed(user_id):
             return False
     return True
 
-# ===== КЕЗЕКПЕН ВИДЕО АЛУ =====
+# =================== ВИДЕО/ФОТО ===================
 async def get_next_video(user_id):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM videos") as c:
@@ -84,7 +83,6 @@ async def get_next_video(user_id):
         await db.commit()
         return file_id
 
-# ===== КЕЗЕКПЕН ФОТО АЛУ =====
 async def get_next_photo(user_id):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM photos") as c:
@@ -101,7 +99,7 @@ async def get_next_photo(user_id):
         await db.commit()
         return file_id
 
-# ======== МЕНЮ ========
+# =================== МЕНЮ ===================
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -113,7 +111,7 @@ def main_menu():
         resize_keyboard=True
     )
 
-# ======== ХЕНДЛЕРЛЕР ========
+# =================== ХЕНДЛЕР ===================
 @dp.message(Command("start"))
 async def start_cmd(msg: Message):
     if msg.chat.type != "private":
@@ -127,7 +125,7 @@ async def start_cmd(msg: Message):
         if ref_id != msg.from_user.id:
             await change_bonus(ref_id, 2)
             try:
-                await bot.send_message(ref_id, f"🎉 Сіз жаңа қолданушыны шақырдыңыз! (+2 бонус)\n👉 @{msg.from_user.username or msg.from_user.first_name}")
+                await bot.send_message(ref_id, f"🎉 Сіз жаңа қолданушыны шақырдыңыз! (+2 бонус)")
             except:
                 pass
     if msg.from_user.id != ADMIN_ID and not await is_subscribed(msg.from_user.id):
@@ -172,10 +170,10 @@ async def get_photo(msg: Message):
         await msg.answer("Фото жоқ!")
 
 @dp.message(F.text == "⭐ Бонус")
-async def get_bonus_link(msg: Message):
+async def bonus_link(msg: Message):
     bot_username = (await bot.me()).username
     link = f"https://t.me/{bot_username}?start={msg.from_user.id}"
-    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус ✅\n👉 Сілтеме:\n{link}")
+    await msg.answer(f"⭐ Досыңды шақырып бонус ал!\n👉 Сілтеме: {link}")
 
 @dp.message(F.text == "✅ VIP режим")
 async def vip_mode(msg: Message):
@@ -183,11 +181,11 @@ async def vip_mode(msg: Message):
 
 @dp.message(F.text == "➕ 📢 Каналдар")
 async def channels_list(msg: Message):
-    await msg.answer("🔥 Біздің каналдарға жазылыңыз:\n" + "\n".join(CHANNELS))
+    await msg.answer("🔥 Каналдар:\n" + "\n".join(CHANNELS))
 
 @dp.message(F.text == "☎ Оператор")
 async def contact_operator(msg: Message):
-    await msg.answer("⚠ Егер ботта ақау болса, операторға жазыңыз: @Assistedkz_bot")
+    await msg.answer("⚠ Көмек: @Assistedkz_bot")
 
 @dp.message(F.text == "📊 Қолданушылар саны")
 async def user_count(msg: Message):
@@ -200,7 +198,6 @@ async def user_count(msg: Message):
             count = row[0] if row else 0
     await msg.answer(f"👥 Қолданушылар саны: {count}")
 
-# ======== АДМИН ЖІБЕРЕТІН ========
 @dp.message(F.video)
 async def save_video(msg: Message):
     if msg.from_user.id != ADMIN_ID:
@@ -221,7 +218,7 @@ async def save_photo(msg: Message):
         await db.commit()
     await msg.answer("✅ Фото сақталды!")
 
-# ======== SCHEDULER ========
+# =================== SCHEDULER ===================
 scheduler = AsyncIOScheduler()
 
 async def add_bonus_all():
@@ -231,7 +228,7 @@ async def add_bonus_all():
 
 scheduler.add_job(lambda: asyncio.create_task(add_bonus_all()), 'interval', hours=12)
 
-# ======== СТАРТ ========
+# =================== MAIN ===================
 async def main():
     await init_db()
     scheduler.start()
