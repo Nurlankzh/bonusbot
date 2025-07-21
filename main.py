@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 import aiosqlite
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
@@ -9,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 from threading import Thread
 
+# 🔑 СЕНІҢ ТОКЕНІҢ МЕН АДМИН ID
 API_TOKEN = "7748542247:AAH5IwyoUuYdtZwsJ-woqKQ6XZJteX7L2EQ"
 ADMIN_ID = 6927494520
 CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
@@ -76,7 +76,7 @@ async def is_subscribed(user_id):
     for ch in CHANNELS:
         try:
             m = await bot.get_chat_member(chat_id=ch, user_id=user_id)
-            if m.status in ("left","kicked"):
+            if m.status in ("left", "kicked"):
                 return False
         except:
             return False
@@ -95,7 +95,7 @@ async def get_next_video(user_id):
             idx = 0
         async with db.execute("SELECT file_id FROM videos ORDER BY id LIMIT 1 OFFSET ?", (idx,)) as c:
             file_id = (await c.fetchone())[0]
-        await db.execute("UPDATE users SET last_video_index=? WHERE user_id=?", (idx+1, user_id))
+        await db.execute("UPDATE users SET last_video_index=? WHERE user_id=?", (idx + 1, user_id))
         await db.commit()
         return file_id
 
@@ -112,7 +112,7 @@ async def get_next_photo(user_id):
             idx = 0
         async with db.execute("SELECT file_id FROM photos ORDER BY id LIMIT 1 OFFSET ?", (idx,)) as c:
             file_id = (await c.fetchone())[0]
-        await db.execute("UPDATE users SET last_photo_index=? WHERE user_id=?", (idx+1, user_id))
+        await db.execute("UPDATE users SET last_photo_index=? WHERE user_id=?", (idx + 1, user_id))
         await db.commit()
         return file_id
 
@@ -190,11 +190,11 @@ async def get_photo(msg: Message):
 async def get_bonus_link(msg: Message):
     bot_username = (await bot.me()).username
     link = f"https://t.me/{bot_username}?start={msg.from_user.id}"
-    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус аласыз ✅\n\n👉 Сіздің сілтемеңіз:\n{link}")
+    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус ✅\n\n👉 Сілтемең:\n{link}")
 
 @dp.message(F.text == "✅ VIP режим")
 async def vip_mode(msg: Message):
-    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n\n👉 VIP сатып алу үшін: @KazHubALU жаз!")
+    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP сатып алу үшін: @KazHubALU")
 
 @dp.message(F.text == "➕ 📢 Каналдар")
 async def channels_list(msg: Message):
@@ -250,12 +250,8 @@ scheduler.add_job(lambda: asyncio.create_task(add_bonus_all()), 'interval', hour
 async def main():
     await init_db()
     scheduler.start()
-    keep_alive()
     await dp.start_polling(bot)
 
-    if __name__ == "__main__":
-    keep_alive()            # ✨ Мұны бірінші қоясың
-    asyncio.run(main())     # Содан кейін негізгі main іске қосылады
-    
 if __name__ == "__main__":
-    asyncio.run(main())
+    keep_alive()        # 🌐 Flask keep-alive
+    asyncio.run(main()) # 🤖 Басты цикл
