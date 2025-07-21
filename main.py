@@ -5,31 +5,16 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from flask import Flask
-from threading import Thread
 
-# 🔑 СЕНІҢ ТОКЕНІҢ МЕН АДМИН ID
-API_TOKEN = "7748542247:AAH5IwyoUuYdtZwsJ-woqKQ6XZJteX7L2EQ"
+# ====== ОСЫ ЖЕРДІ ӨЗІҢЕ ҚАРАП ӨЗГЕРТПЕЙСІҢ ======
+API_TOKEN = "СЕНІҢ_ТОКЕНІҢ"
 ADMIN_ID = 6927494520
 CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
+# ==============================================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
-
-# ======== KEEP ALIVE ========
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "I'm alive!"
-
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
 
 # ======== БАЗА ИНИЦИАЛИЗАЦИЯ ========
 async def init_db():
@@ -76,13 +61,13 @@ async def is_subscribed(user_id):
     for ch in CHANNELS:
         try:
             m = await bot.get_chat_member(chat_id=ch, user_id=user_id)
-            if m.status in ("left", "kicked"):
+            if m.status in ("left","kicked"):
                 return False
         except:
             return False
     return True
 
-# ===== КЕЗЕКПЕН ВИДЕО АЛУ =====
+# ===== КЕЗЕКПЕН ВИДЕО =====
 async def get_next_video(user_id):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM videos") as c:
@@ -95,11 +80,11 @@ async def get_next_video(user_id):
             idx = 0
         async with db.execute("SELECT file_id FROM videos ORDER BY id LIMIT 1 OFFSET ?", (idx,)) as c:
             file_id = (await c.fetchone())[0]
-        await db.execute("UPDATE users SET last_video_index=? WHERE user_id=?", (idx + 1, user_id))
+        await db.execute("UPDATE users SET last_video_index=? WHERE user_id=?", (idx+1, user_id))
         await db.commit()
         return file_id
 
-# ===== КЕЗЕКПЕН ФОТО АЛУ =====
+# ===== КЕЗЕКПЕН ФОТО =====
 async def get_next_photo(user_id):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM photos") as c:
@@ -112,7 +97,7 @@ async def get_next_photo(user_id):
             idx = 0
         async with db.execute("SELECT file_id FROM photos ORDER BY id LIMIT 1 OFFSET ?", (idx,)) as c:
             file_id = (await c.fetchone())[0]
-        await db.execute("UPDATE users SET last_photo_index=? WHERE user_id=?", (idx + 1, user_id))
+        await db.execute("UPDATE users SET last_photo_index=? WHERE user_id=?", (idx+1, user_id))
         await db.commit()
         return file_id
 
@@ -190,19 +175,19 @@ async def get_photo(msg: Message):
 async def get_bonus_link(msg: Message):
     bot_username = (await bot.me()).username
     link = f"https://t.me/{bot_username}?start={msg.from_user.id}"
-    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус ✅\n\n👉 Сілтемең:\n{link}")
+    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус ✅\n\n👉 Сілтеме:\n{link}")
 
 @dp.message(F.text == "✅ VIP режим")
 async def vip_mode(msg: Message):
-    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP сатып алу үшін: @KazHubALU")
+    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP сатып алу үшін: @KazHubALU жаз!")
 
 @dp.message(F.text == "➕ 📢 Каналдар")
 async def channels_list(msg: Message):
-    await msg.answer("🔥 Біздің каналдарға жазылыңыз:\n" + "\n".join(CHANNELS))
+    await msg.answer("🔥 Біздің каналдар:\n" + "\n".join(CHANNELS))
 
 @dp.message(F.text == "☎ Оператор")
 async def contact_operator(msg: Message):
-    await msg.answer("⚠ Егер ботта ақау болса, операторға жазыңыз: @Assistedkz_bot")
+    await msg.answer("⚠ Көмек керек болса: @Assistedkz_bot")
 
 @dp.message(F.text == "📊 Қолданушылар саны")
 async def user_count(msg: Message):
@@ -215,7 +200,7 @@ async def user_count(msg: Message):
             count = row[0] if row else 0
     await msg.answer(f"👥 Боттағы қолданушылар саны: {count}")
 
-# ======== АДМИН ЖІБЕРЕТІН ========
+# ======== АДМИН ========
 @dp.message(F.video)
 async def save_video(msg: Message):
     if msg.from_user.id != ADMIN_ID:
@@ -253,5 +238,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    keep_alive()        # 🌐 Flask keep-alive
-    asyncio.run(main()) # 🤖 Басты цикл
+    asyncio.run(main())
