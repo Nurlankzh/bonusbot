@@ -253,5 +253,9 @@ async def main():
     keep_alive()
     await dp.start_polling(bot)
 
+    if __name__ == "__main__":
+    keep_alive()            # ✨ Мұны бірінші қоясың
+    asyncio.run(main())     # Содан кейін негізгі main іске қосылады
+    
 if __name__ == "__main__":
     asyncio.run(main())
