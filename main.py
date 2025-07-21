@@ -6,11 +6,11 @@ from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# ====== ОСЫ ЖЕРДІ ӨЗІҢЕ ҚАРАП ӨЗГЕРТПЕЙСІҢ ======
-API_TOKEN = "СЕНІҢ_ТОКЕНІҢ"
-ADMIN_ID = 6927494520
-CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
-# ==============================================
+# ==== МЫНАНЫ ӨЗІҢЕ АУЫСТЫР 👇 ====
+API_TOKEN = "YOUR_BOT_TOKEN"
+ADMIN_ID = 123456789  # өзіңнің Telegram ID-ді жаз
+CHANNELS = ["@oqigalaruyatsiz", "@Qazhuboyndar"]
+# =================================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -61,13 +61,13 @@ async def is_subscribed(user_id):
     for ch in CHANNELS:
         try:
             m = await bot.get_chat_member(chat_id=ch, user_id=user_id)
-            if m.status in ("left","kicked"):
+            if m.status in ("left", "kicked"):
                 return False
         except:
             return False
     return True
 
-# ===== КЕЗЕКПЕН ВИДЕО =====
+# ===== КЕЗЕКПЕН ВИДЕО АЛУ =====
 async def get_next_video(user_id):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM videos") as c:
@@ -84,7 +84,7 @@ async def get_next_video(user_id):
         await db.commit()
         return file_id
 
-# ===== КЕЗЕКПЕН ФОТО =====
+# ===== КЕЗЕКПЕН ФОТО АЛУ =====
 async def get_next_photo(user_id):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM photos") as c:
@@ -175,19 +175,19 @@ async def get_photo(msg: Message):
 async def get_bonus_link(msg: Message):
     bot_username = (await bot.me()).username
     link = f"https://t.me/{bot_username}?start={msg.from_user.id}"
-    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус ✅\n\n👉 Сілтеме:\n{link}")
+    await msg.answer(f"⭐ Бонус жинау үшін достарыңды шақыр!\nӘр тіркелген досың үшін +2 бонус ✅\n👉 Сілтеме:\n{link}")
 
 @dp.message(F.text == "✅ VIP режим")
 async def vip_mode(msg: Message):
-    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP сатып алу үшін: @KazHubALU жаз!")
+    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP сатып алу үшін: @KazHubALU")
 
 @dp.message(F.text == "➕ 📢 Каналдар")
 async def channels_list(msg: Message):
-    await msg.answer("🔥 Біздің каналдар:\n" + "\n".join(CHANNELS))
+    await msg.answer("🔥 Біздің каналдарға жазылыңыз:\n" + "\n".join(CHANNELS))
 
 @dp.message(F.text == "☎ Оператор")
 async def contact_operator(msg: Message):
-    await msg.answer("⚠ Көмек керек болса: @Assistedkz_bot")
+    await msg.answer("⚠ Егер ботта ақау болса, операторға жазыңыз: @Assistedkz_bot")
 
 @dp.message(F.text == "📊 Қолданушылар саны")
 async def user_count(msg: Message):
@@ -198,9 +198,9 @@ async def user_count(msg: Message):
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
             row = await cur.fetchone()
             count = row[0] if row else 0
-    await msg.answer(f"👥 Боттағы қолданушылар саны: {count}")
+    await msg.answer(f"👥 Қолданушылар саны: {count}")
 
-# ======== АДМИН ========
+# ======== АДМИН ЖІБЕРЕТІН ========
 @dp.message(F.video)
 async def save_video(msg: Message):
     if msg.from_user.id != ADMIN_ID:
