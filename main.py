@@ -7,8 +7,8 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # =================== НАСТРОЙКАЛАР ===================
-API_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # 🔥 Мына жерге ЖАҢА ТОКЕН қойыңыз
-ADMIN_ID = 6927494520  # 🔥 сіз берген айдй
+API_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # 🔥 Сенің токенің
+ADMIN_ID = 6927494520  # 🔥 Сенің админ айдиің
 CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
 
 logging.basicConfig(level=logging.INFO)
@@ -106,7 +106,18 @@ def main_menu():
             [KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото")],
             [KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="✅ VIP режим")],
             [KeyboardButton(text="➕ 📢 Каналдар"), KeyboardButton(text="☎ Оператор")],
-            [KeyboardButton(text="📊 Қолданушылар саны")]
+        ],
+        resize_keyboard=True
+    )
+
+# 🔥 Тек админге арналған меню
+def admin_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото")],
+            [KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="✅ VIP режим")],
+            [KeyboardButton(text="➕ 📢 Каналдар"), KeyboardButton(text="☎ Оператор")],
+            [KeyboardButton(text="📊 Қолданушылар саны"), KeyboardButton(text="📢 Рассылка")]
         ],
         resize_keyboard=True
     )
@@ -131,7 +142,10 @@ async def start_cmd(msg: Message):
     if msg.from_user.id != ADMIN_ID and not await is_subscribed(msg.from_user.id):
         await msg.answer("Алдымен мына каналдарға тіркеліңіз:\n" + "\n".join(CHANNELS))
     else:
-        await msg.answer(f"Қош келдіңіз! Сіздің бонусыңыз: {await get_bonus(msg.from_user.id)}", reply_markup=main_menu())
+        if msg.from_user.id == ADMIN_ID:
+            await msg.answer(f"Қош келдіңіз, Админ! 👑 Сіздің бонусыңыз: {await get_bonus(msg.from_user.id)}", reply_markup=admin_menu())
+        else:
+            await msg.answer(f"Қош келдіңіз! Сіздің бонусыңыз: {await get_bonus(msg.from_user.id)}", reply_markup=main_menu())
 
 @dp.message(F.text == "🎥 Видео")
 async def get_video(msg: Message):
@@ -197,6 +211,32 @@ async def user_count(msg: Message):
             row = await cur.fetchone()
             count = row[0] if row else 0
     await msg.answer(f"👥 Қолданушылар саны: {count}")
+
+# 🔥 ЖАҢА: Рассылка хендлері (тек админ)
+@dp.message(F.text == "📢 Рассылка")
+async def broadcast_start(msg: Message):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    await msg.answer("✍️ Маған жібергің келетін хабарламаны жаз.")
+    # Келесі хабарламаны күтетін ішкі хендлер
+    @dp.message()
+    async def broadcast_send(m: Message):
+        if m.from_user.id != ADMIN_ID:
+            return
+        text = m.text
+        await m.answer("📤 Рассылка басталды...")
+        async with aiosqlite.connect("bot.db") as db:
+            async with db.execute("SELECT user_id FROM users") as cur:
+                users = await cur.fetchall()
+        sent = 0
+        for u in users:
+            try:
+                await bot.send_message(u[0], text)
+                sent += 1
+            except:
+                pass
+        await m.answer(f"✅ Рассылка {sent} адамға жіберілді.")
+        return
 
 @dp.message(F.video)
 async def save_video(msg: Message):
