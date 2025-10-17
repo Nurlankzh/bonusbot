@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # =================== НАСТРОЙКАЛАР ===================
 API_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # 🔥 Сенің токенің
 ADMIN_ID = 6927494520  # 🔥 Сенің админ айдиің
-CHANNELS = ["@oqigalaruyatsiz", "@bokseklub", "@Qazhuboyndar"]
+CHANNELS = ["@hotZonauyat", "@bokseklub", "@Qazhuboyndar"]
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
