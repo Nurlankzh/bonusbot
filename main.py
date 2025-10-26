@@ -7,10 +7,10 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # =================== НАСТРОЙКАЛАР ===================
-API_TOKEN = "7748542247:AAEPCvB-3EFngPPv45SvBG_Nizh0qQmpwB4"  # 🔥 Сенің токенің
-ADMIN_ID = 6927494520  # 🔥 Сенің админ айдиің
-CHANNEL_LINK = "https://t.me/+XRoxE_8bUM1mMmIy"  # 🔥 Жабық канал (заявкамен қабылдайды)
-CHANNEL_USERNAME = "@bokseklub"  # 🔥 Канал юзернейм (бот тексеру үшін керек)
+API_TOKEN = "7748542247:AAEPCvB-3EFngPPv45SvBG_Nizh0qQmpwB4"  # 🔥 Токен
+ADMIN_ID = 6927494520  # 🔥 Админ ID
+CHANNEL_LINK = "https://t.me/+XRoxE_8bUM1mMmIy"  # 🔥 Канал сілтемесі (жабық)
+CHANNEL_USERNAME = "@bokseklub"  # 🔥 Канал username (бот тексеру үшін)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
