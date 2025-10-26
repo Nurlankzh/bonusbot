@@ -7,9 +7,10 @@ from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # =================== НАСТРОЙКАЛАР ===================
-API_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # 🔥 Сенің токенің
+API_TOKEN = "7748542247:AAEPCvB-3EFngPPv45SvBG_Nizh0qQmpwB4"  # 🔥 Сенің токенің
 ADMIN_ID = 6927494520  # 🔥 Сенің админ айдиің
-CHANNELS = ["@bokseklub", "@Qazhuboyndar"]
+CHANNEL_LINK = "https://t.me/+XRoxE_8bUM1mMmIy"  # 🔥 Жабық канал (заявкамен қабылдайды)
+CHANNEL_USERNAME = "@bokseklub"  # 🔥 Канал юзернейм (бот тексеру үшін керек)
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -54,17 +55,15 @@ async def change_bonus(user_id, amount):
         await db.execute("UPDATE users SET bonus = bonus + ? WHERE user_id=?", (amount, user_id))
         await db.commit()
 
+# =================== КАНАЛ ТЕКСЕРУ ===================
 async def is_subscribed(user_id):
     if user_id == ADMIN_ID:
         return True
-    for ch in CHANNELS:
-        try:
-            m = await bot.get_chat_member(chat_id=ch, user_id=user_id)
-            if m.status in ("left", "kicked"):
-                return False
-        except:
-            return False
-    return True
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status not in ("left", "kicked")
+    except:
+        return False
 
 # =================== ВИДЕО/ФОТО ===================
 async def get_next_video(user_id):
@@ -79,7 +78,7 @@ async def get_next_video(user_id):
             idx = 0
         async with db.execute("SELECT file_id FROM videos ORDER BY id LIMIT 1 OFFSET ?", (idx,)) as c:
             file_id = (await c.fetchone())[0]
-        await db.execute("UPDATE users SET last_video_index=? WHERE user_id=?", (idx+1, user_id))
+        await db.execute("UPDATE users SET last_video_index=? WHERE user_id=?", (idx + 1, user_id))
         await db.commit()
         return file_id
 
@@ -95,7 +94,7 @@ async def get_next_photo(user_id):
             idx = 0
         async with db.execute("SELECT file_id FROM photos ORDER BY id LIMIT 1 OFFSET ?", (idx,)) as c:
             file_id = (await c.fetchone())[0]
-        await db.execute("UPDATE users SET last_photo_index=? WHERE user_id=?", (idx+1, user_id))
+        await db.execute("UPDATE users SET last_photo_index=? WHERE user_id=?", (idx + 1, user_id))
         await db.commit()
         return file_id
 
@@ -105,18 +104,17 @@ def main_menu():
         keyboard=[
             [KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото")],
             [KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="✅ VIP режим")],
-            [KeyboardButton(text="➕ 📢 Каналдар"), KeyboardButton(text="☎ Оператор")],
+            [KeyboardButton(text="➕ 📢 Канал"), KeyboardButton(text="☎ Оператор")],
         ],
         resize_keyboard=True
     )
 
-# 🔥 Тек админге арналған меню
 def admin_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото")],
             [KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="✅ VIP режим")],
-            [KeyboardButton(text="➕ 📢 Каналдар"), KeyboardButton(text="☎ Оператор")],
+            [KeyboardButton(text="➕ 📢 Канал"), KeyboardButton(text="☎ Оператор")],
             [KeyboardButton(text="📊 Қолданушылар саны"), KeyboardButton(text="📢 Рассылка")]
         ],
         resize_keyboard=True
@@ -127,10 +125,13 @@ def admin_menu():
 async def start_cmd(msg: Message):
     if msg.chat.type != "private":
         return
+
     ref = None
     if len(msg.text.split()) > 1:
         ref = msg.text.split()[1]
+
     await add_user(msg.from_user.id, ref)
+
     if ref and ref.isdigit():
         ref_id = int(ref)
         if ref_id != msg.from_user.id:
@@ -139,49 +140,58 @@ async def start_cmd(msg: Message):
                 await bot.send_message(ref_id, f"🎉 Сіз жаңа қолданушыны шақырдыңыз! (+2 бонус)")
             except:
                 pass
+
     if msg.from_user.id != ADMIN_ID and not await is_subscribed(msg.from_user.id):
-        await msg.answer("Алдымен мына каналдарға тіркеліңіз:\n" + "\n".join(CHANNELS))
+        await msg.answer(
+            f"Алдымен каналға тіркеліңіз:\n\n{CHANNEL_LINK}\n\n✅ Тіркелген соң /start басыңыз"
+        )
     else:
         if msg.from_user.id == ADMIN_ID:
-            await msg.answer(f"Қош келдіңіз, Админ! 👑 Сіздің бонусыңыз: {await get_bonus(msg.from_user.id)}", reply_markup=admin_menu())
+            await msg.answer(
+                f"Қош келдіңіз, Админ 👑\nСіздің бонусыңыз: {await get_bonus(msg.from_user.id)}",
+                reply_markup=admin_menu(),
+            )
         else:
-            await msg.answer(f"Қош келдіңіз! Сіздің бонусыңыз: {await get_bonus(msg.from_user.id)}", reply_markup=main_menu())
+            await msg.answer(
+                f"Қош келдіңіз!\nСіздің бонусыңыз: {await get_bonus(msg.from_user.id)}",
+                reply_markup=main_menu(),
+            )
 
 @dp.message(F.text == "🎥 Видео")
 async def get_video(msg: Message):
     if msg.chat.type != "private":
         return
     if msg.from_user.id != ADMIN_ID and not await is_subscribed(msg.from_user.id):
-        await msg.answer("Алдымен каналдарға тіркеліңіз!")
+        await msg.answer(f"Алдымен каналға тіркеліңіз:\n\n{CHANNEL_LINK}")
         return
     b = await get_bonus(msg.from_user.id)
     if msg.from_user.id != ADMIN_ID and b < 3:
-        await msg.answer("Бонус жеткіліксіз")
+        await msg.answer("❌ Бонус жеткіліксіз!")
         return
     file_id = await get_next_video(msg.from_user.id)
     if file_id:
         await change_bonus(msg.from_user.id, -3)
         await bot.send_video(msg.chat.id, file_id)
     else:
-        await msg.answer("Видео жоқ!")
+        await msg.answer("⚠ Видео жоқ!")
 
 @dp.message(F.text == "🖼 Фото")
 async def get_photo(msg: Message):
     if msg.chat.type != "private":
         return
     if msg.from_user.id != ADMIN_ID and not await is_subscribed(msg.from_user.id):
-        await msg.answer("Алдымен каналдарға тіркеліңіз!")
+        await msg.answer(f"Алдымен каналға тіркеліңіз:\n\n{CHANNEL_LINK}")
         return
     b = await get_bonus(msg.from_user.id)
     if msg.from_user.id != ADMIN_ID and b < 2:
-        await msg.answer("Бонус жеткіліксіз")
+        await msg.answer("❌ Бонус жеткіліксіз!")
         return
     file_id = await get_next_photo(msg.from_user.id)
     if file_id:
         await change_bonus(msg.from_user.id, -2)
         await bot.send_photo(msg.chat.id, file_id)
     else:
-        await msg.answer("Фото жоқ!")
+        await msg.answer("⚠ Фото жоқ!")
 
 @dp.message(F.text == "⭐ Бонус")
 async def bonus_link(msg: Message):
@@ -191,34 +201,32 @@ async def bonus_link(msg: Message):
 
 @dp.message(F.text == "✅ VIP режим")
 async def vip_mode(msg: Message):
-    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP сатып алу үшін: @KazHubALU")
+    await msg.answer("💎 VIP режим:\n30 бонус – 1000 тг\n50 бонус – 1500 тг\n80 бонус – 2000 тг\n👉 VIP алу үшін: @KazHubALU")
 
-@dp.message(F.text == "➕ 📢 Каналдар")
+@dp.message(F.text == "➕ 📢 Канал")
 async def channels_list(msg: Message):
-    await msg.answer("🔥 Каналдар:\n" + "\n".join(CHANNELS))
+    await msg.answer(f"🔥 Каналға жазылыңыз:\n{CHANNEL_LINK}")
 
 @dp.message(F.text == "☎ Оператор")
 async def contact_operator(msg: Message):
-    await msg.answer("⚠ Көмек: @Assistedkz_bot")
+    await msg.answer("⚙ Көмек: @KazHubALU")
 
 @dp.message(F.text == "📊 Қолданушылар саны")
 async def user_count(msg: Message):
     if msg.from_user.id != ADMIN_ID:
-        await msg.answer("Бұл ақпарат тек админге арналған.")
+        await msg.answer("Бұл функция тек админге арналған.")
         return
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
-            row = await cur.fetchone()
-            count = row[0] if row else 0
-    await msg.answer(f"👥 Қолданушылар саны: {count}")
+            count = (await cur.fetchone())[0]
+    await msg.answer(f"👥 Жалпы қолданушылар саны: {count}")
 
-# 🔥 ЖАҢА: Рассылка хендлері (тек админ)
+# 🔥 Рассылка
 @dp.message(F.text == "📢 Рассылка")
 async def broadcast_start(msg: Message):
     if msg.from_user.id != ADMIN_ID:
         return
     await msg.answer("✍️ Маған жібергің келетін хабарламаны жаз.")
-    # Келесі хабарламаны күтетін ішкі хендлер
     @dp.message()
     async def broadcast_send(m: Message):
         if m.from_user.id != ADMIN_ID:
@@ -235,9 +243,9 @@ async def broadcast_start(msg: Message):
                 sent += 1
             except:
                 pass
-        await m.answer(f"✅ Рассылка {sent} адамға жіберілді.")
-        return
+        await m.answer(f"✅ {sent} адамға жіберілді.")
 
+# 🔥 Видео мен фотоны админ сақтай алады
 @dp.message(F.video)
 async def save_video(msg: Message):
     if msg.from_user.id != ADMIN_ID:
@@ -266,7 +274,7 @@ async def add_bonus_all():
         await db.execute("UPDATE users SET bonus = bonus + 5")
         await db.commit()
 
-scheduler.add_job(lambda: asyncio.create_task(add_bonus_all()), 'interval', hours=12)
+scheduler.add_job(lambda: asyncio.create_task(add_bonus_all()), "interval", hours=12)
 
 # =================== MAIN ===================
 async def main():
