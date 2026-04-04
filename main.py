@@ -9,7 +9,7 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # ==========================================
 # CONFIGURATION
 # ==========================================
-BOT_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
+BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@uyatsizoqiga"
 DB_FILE = "data.db"
