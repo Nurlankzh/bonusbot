@@ -13,7 +13,7 @@ BOT_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@uyatsizoqiga"
 DB_FILE = "data.db"
-REF_BOT_USERNAME = "Darvinuyatszdaribot"
+REF_BOT_USERNAME = "@Deetskay_bot"
 VIP_CONTACT = "Kazhabs"  # VIP алу үшін контакті
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
