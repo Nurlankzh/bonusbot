@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # ===== CONFIG =====
-TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # <- өзіңнің бот токеніңді қоясың
+TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
 ADMIN_ID = 6303091468
 REF_LINK = "https://t.me/Darvinuyatszdaribot?start=6303091468"
 
@@ -56,12 +56,11 @@ async def db_query(sql, params=(), fetch=None):
 def main_kb(user_id):
     kb = ReplyKeyboardBuilder()
     kb.row(KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото"))
-    kb.row(KeyboardButton(text="⭐ Бонус"))
+    kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Бонус беру"))
+    kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
     if user_id == ADMIN_ID:
-        kb.row(KeyboardButton(text="📤 Бонус беру"))  # Тек админге
         kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
         kb.row(KeyboardButton(text="📢 Рассылка"))
-    kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
     return kb.as_markup(resize_keyboard=True)
 
 # ===== START =====
@@ -71,11 +70,7 @@ async def start(msg: Message):
     if not user:
         await db_query("INSERT INTO users (user_id) VALUES (?)", (msg.from_user.id,))
     await msg.answer(
-        "🔥 Қош келдің!\n\n"
-        "🎥 Видео көр\n"
-        "🖼 Фото аш\n"
-        "💰 Бонус жина\n\n"
-        "👇 Таңда:",
+        "🔥 Қош келдің!\n\n🎥 Видео көр\n🖼 Фото аш\n💰 Бонус жина\n\n👇 Таңда:",
         reply_markup=main_kb(msg.from_user.id)
     )
 
@@ -85,10 +80,7 @@ async def bonus(msg: Message):
     u = await db_query("SELECT bonus, is_vip FROM users WHERE user_id=?", (msg.from_user.id,), "one")
     status = "💎 VIP" if u[1] else "👤 Қарапайым"
     await msg.answer(
-        f"{status}\n\n"
-        f"💰 Баланс: {u[0]}\n\n"
-        f"👥 Дос шақыр:\n{REF_LINK}\n\n"
-        f"🔥 Әр адам = +10 бонус"
+        f"{status}\n\n💰 Баланс: {u[0]}\n\n👥 Дос шақыр:\n{REF_LINK}\n\n🔥 Әр адам = +10 бонус"
     )
 
 # ===== DAILY BONUS =====
@@ -108,11 +100,7 @@ async def daily(msg: Message):
 @dp.message(F.text == "💎 VIP")
 async def vip(msg: Message):
     await msg.answer(
-        "💎 VIP РЕЖИМ\n\n"
-        "♾ Шексіз контент\n"
-        "🚫 Бонус кетпейді\n\n"
-        "💰 Бағасы: 100 бонус\n\n"
-        "👇 Таңда:",
+        "💎 VIP РЕЖИМ\n\n♾ Шексіз контент\n🚫 Бонус кетпейді\n\n💰 Бағасы: 100 бонус\n\n👇 Таңда:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💎 Бонуспен алу", callback_data="buy_vip")],
             [InlineKeyboardButton(text="💬 Менеджер", url="https://t.me/Kazhabs")]
@@ -139,9 +127,7 @@ async def media(msg: Message):
     is_vip = u[4]
     if not is_vip and u[1] < cost:
         return await msg.answer(
-            "❌ Бонусың бітіп қалды!\n\n"
-            f"👥 Дос шақыр:\n{REF_LINK}\n\n"
-            "🔥 Әр адам = +10 бонус"
+            "❌ Бонусың бітіп қалды!\n\n👥 Дос шақыр:\n{REF_LINK}\n\n🔥 Әр адам = +10 бонус"
         )
     last_id = u[2] if is_video else u[3]
     media_item = await db_query(f"SELECT id, file_id FROM {table} WHERE id>? ORDER BY id LIMIT 1", (last_id,), "one")
@@ -164,13 +150,11 @@ async def media(msg: Message):
 async def upload(msg: Message):
     f_type = "video" if msg.video else "photo"
     f_id = msg.video.file_id if msg.video else msg.photo[-1].file_id
-
     if msg.from_user.id == ADMIN_ID:
         table = "videos" if f_type == "video" else "photos"
         await db_query(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
         await msg.answer(f"✅ {f_type.capitalize()} базаға қосылды! Шексіз қолжетімді.")
         return
-
     await db_query("INSERT INTO pending (user_id, file_id, file_type) VALUES (?, ?, ?)",
                    (msg.from_user.id, f_id, f_type))
     await msg.answer("⏳ Админ тексеруде...")
@@ -222,10 +206,7 @@ async def stats(msg: Message):
     active_users = await db_query("SELECT COUNT(*) FROM users WHERE bonus>0 OR is_vip=1", fetch="one")
     pending_count = await db_query("SELECT COUNT(*) FROM pending", fetch="one")
     await msg.answer(
-        f"📊 Статистика\n\n"
-        f"👥 Барлығы: {total_users[0]}\n"
-        f"🔥 Активті: {active_users[0]}\n"
-        f"⏳ Pending: {pending_count[0]}"
+        f"📊 Статистика\n\n👥 Барлығы: {total_users[0]}\n🔥 Активті: {active_users[0]}\n⏳ Pending: {pending_count[0]}"
     )
 
 # ===== BROADCAST =====
@@ -252,38 +233,21 @@ async def broadcast_send(msg: Message):
         await msg.answer(f"📢 Жарияланды: {sent}/{len(users)}")
         broadcast_state[msg.from_user.id] = False
 
-# ===== ADMIN GIVE BONUS =====
-bonus_state = {}
-
-@dp.message(F.text == "📤 Бонус беру", F.from_user.id == ADMIN_ID)
+# ===== ADMIN GIVE BONUS (бір жолда) =====
+@dp.message(F.text.startswith("📤 Бонус беру"), F.from_user.id == ADMIN_ID)
 async def give_bonus(msg: Message):
-    bonus_state[msg.from_user.id] = {"step": "id"}
-    await msg.answer("👤 Қолданушының Telegram ID-ын жіберіңіз:")
-
-@dp.message(F.from_user.id == ADMIN_ID)
-async def give_bonus_step(msg: Message):
-    state = bonus_state.get(msg.from_user.id)
-    if not state:
-        return
-    if state["step"] == "id":
-        try:
-            user_id = int(msg.text)
-        except ValueError:
-            return await msg.answer("❌ ID дұрыс емес, тек сандармен жазыңыз.")
-        user = await db_query("SELECT 1 FROM users WHERE user_id=?", (user_id,), "one")
-        if not user:
-            return await msg.answer("❌ Бұл қолданушы базаға тіркелмеген!")
-        state["user_id"] = user_id
-        state["step"] = "amount"
-        return await msg.answer(f"💰 {user_id} қолданушыға қанша бонус қосамыз?")
-    elif state["step"] == "amount":
-        try:
-            bonus = int(msg.text)
-        except ValueError:
-            return await msg.answer("❌ Сандармен жазыңыз.")
-        await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, state["user_id"]))
-        await msg.answer(f"✅ {bonus} бонус {state['user_id']}-ға қосылды!")
-        bonus_state.pop(msg.from_user.id)
+    try:
+        parts = msg.text.split()
+        if len(parts) != 4:  # 📤 Бонус беру <user_id> <amount>
+            return await msg.answer("❌ Қате формат! Мысалы: 📤 Бонус беру 8282635086 10")
+        user_id = int(parts[2])
+        bonus = int(parts[3])
+        await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, user_id))
+        await msg.answer(f"✅ {bonus} бонус {user_id}-ға қосылды!")
+    except ValueError:
+        await msg.answer("❌ ID және бонус сандары дұрыс емес, тек сандармен жазу керек.")
+    except Exception as e:
+        await msg.answer(f"❌ Қате шықты: {e}")
 
 # ===== UNKNOWN MESSAGE =====
 @dp.message()
