@@ -6,14 +6,12 @@ from datetime import datetime, timedelta
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
-BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
+# ================= CONFIG =================
+BOT_TOKEN = "СЕНІҢ_ТОКЕНІҢІЗ"
 ADMIN_ID = 6303091468
-CHANNEL_USERNAME = "@uyatsizoqiga"
+CHANNEL_USERNAME = "@senin_kanalyngyz"
 REF_BOT_USERNAME = "@Deetskay_bot"
-VIP_CONTACT = "@Kazhabs"
+VIP_CONTACT = "Kazhabs"
 DB_FILE = "data.db"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -22,9 +20,7 @@ logger = logging.getLogger(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 db_lock = threading.Lock()
 
-# ==========================================
-# DATABASE INIT
-# ==========================================
+# ================= DATABASE =================
 def get_db_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
@@ -62,9 +58,7 @@ def init_db():
 
 init_db()
 
-# ==========================================
-# KEYBOARDS
-# ==========================================
+# ================= KEYBOARDS =================
 def get_main_keyboard(user_id):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row(KeyboardButton("🎥 Видео көру"), KeyboardButton("🖼 Фото көру"))
@@ -75,9 +69,7 @@ def get_main_keyboard(user_id):
         kb.row(KeyboardButton("📊 Статистика"), KeyboardButton("📢 Рассылка"))
     return kb
 
-# ==========================================
-# HELPERS
-# ==========================================
+# ================= HELPERS =================
 def ensure_user(user_id, invited_by=None):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -118,9 +110,7 @@ def file_exists(file_id, content_type):
     conn.close()
     return exists
 
-# ==========================================
-# START COMMAND
-# ==========================================
+# ================= START =================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -131,9 +121,7 @@ def start_cmd(message):
     markup.add(InlineKeyboardButton("✅ 18-ден астым", callback_data="confirm_adult"))
     bot.send_message(user_id, "🔞 Бұл ботта ересектерге арналған контент бар. Жасыңызды растаңыз:", reply_markup=markup)
 
-# ==========================================
-# CALLBACK HANDLER
-# ==========================================
+# ================= CALLBACK =================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_manager(call):
     user_id = call.from_user.id
@@ -146,9 +134,7 @@ def callback_manager(call):
         bot.delete_message(user_id, call.message.message_id)
         bot.send_message(user_id, "✅ Рақмет! Қалаған батырманы басыңыз.", reply_markup=get_main_keyboard(user_id))
 
-# ==========================================
-# VIP HANDLER
-# ==========================================
+# ================= VIP =================
 @bot.message_handler(func=lambda m: m.text == "💎 VIP алу")
 def vip_handler(message):
     user_id = message.from_user.id
@@ -164,9 +150,7 @@ def vip_handler(message):
                          f"Барлық видеолар мен фотолар тегін қол жетімді болады.", reply_markup=markup)
     conn.close()
 
-# ==========================================
-# DAILY BONUS
-# ==========================================
+# ================= DAILY BONUS =================
 @bot.message_handler(func=lambda m: m.text == "🎁 Күндік бонус алу")
 def daily_bonus_handler(message):
     user_id = message.from_user.id
@@ -187,9 +171,7 @@ def daily_bonus_handler(message):
     bot.send_message(user_id, "🎉 +10💸 бонус берілді!")
     conn.close()
 
-# ==========================================
-# VIEW VIDEO / PHOTO
-# ==========================================
+# ================= VIEW CONTENT =================
 @bot.message_handler(func=lambda m: m.text in ["🎥 Видео көру", "🖼 Фото көру"])
 def view_content_handler(message):
     user_id = message.from_user.id
@@ -201,6 +183,12 @@ def view_content_handler(message):
 
     is_vip = user_data[4]
     balance = user_data[1]
+
+    # Баланс 0 болса, тек реферал арқылы
+    if balance <= 0 and not is_vip:
+        bot.send_message(user_id, get_ref_msg(user_id))
+        conn.close()
+        return
 
     if message.text == "🎥 Видео көру":
         if not check_subscription(user_id):
@@ -233,9 +221,7 @@ def view_content_handler(message):
             bot.send_message(user_id, "😔 Фотолар таусылды.")
     conn.close()
 
-# ==========================================
-# ADMIN VIDEO / PHOTO ADD
-# ==========================================
+# ================= ADMIN ADD CONTENT =================
 @bot.message_handler(func=lambda m: m.text in ["➕ Видео қосу", "➕ Фото қосу"] and m.from_user.id == ADMIN_ID)
 def admin_add_content(message):
     user_id = message.from_user.id
@@ -270,9 +256,7 @@ def handle_admin_upload(message):
         bot.send_message(user_id, "⚠️ Тек видео немесе фото жіберуге болады.")
     conn.close()
 
-# ==========================================
-# ADMIN STATS / BROADCAST
-# ==========================================
+# ================= ADMIN STATS / BROADCAST =================
 @bot.message_handler(func=lambda m: m.text in ["📊 Статистика", "📢 Рассылка"] and m.from_user.id == ADMIN_ID)
 def admin_tools(message):
     if message.text == "📊 Статистика":
@@ -297,8 +281,6 @@ def process_broadcast(message):
         except: pass
     bot.send_message(ADMIN_ID, f"✅ Хабарлама {len(users)} адамға жіберілді.")
 
-# ==========================================
-# RUN BOT
-# ==========================================
+# ================= RUN BOT =================
 logger.info("Bot is polling...")
 bot.infinity_polling()
