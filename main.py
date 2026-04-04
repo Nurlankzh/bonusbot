@@ -9,8 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 # ================= CONFIG =================
-TOKEN = "PUT_YOUR_TOKEN_HERE"
-ADMIN_ID = 123456789
+TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
+ADMIN_ID = 6303091468
 
 logging.basicConfig(level=logging.INFO)
 
