@@ -1,6 +1,2 @@
 aiogram
-aiosqlite
-apscheduler
-pyTelegramBotAPI
-Flask
-gunicorn
+apscheduler==3.10.1
