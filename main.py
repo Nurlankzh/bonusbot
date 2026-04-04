@@ -2,7 +2,6 @@ import os
 import logging
 import sqlite3
 import threading
-import time
 from datetime import datetime, timedelta
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -146,6 +145,27 @@ def callback_manager(call):
             conn.commit()
         bot.delete_message(user_id, call.message.message_id)
         bot.send_message(user_id, "✅ Рақмет! Қалаған батырманы басыңыз.", reply_markup=get_main_keyboard(user_id))
+    elif call.data.startswith("appr_") or call.data.startswith("reject_"):
+        pid = int(call.data.split("_")[1])
+        with db_lock:
+            pending_item = conn.execute("SELECT uploader_id, content_type, file_id FROM pending WHERE id=?", (pid,)).fetchone()
+            if pending_item:
+                uploader_id, content_type, file_id = pending_item
+                if call.data.startswith("appr_"):
+                    table = "videos" if content_type == "video" else "photos"
+                    conn.execute(f"INSERT INTO {table} (file_id, added_by, created_at) VALUES (?,?,?)", 
+                                 (file_id, uploader_id, datetime.now().isoformat()))
+                    conn.execute("DELETE FROM pending WHERE id=?", (pid,))
+                    conn.commit()
+                    try: bot.send_message(uploader_id, f"✅ Сіздің {content_type} файлыңыз мақұлданды!")
+                    except: pass
+                    bot.answer_callback_query(call.id, "Мақұлданды!")
+                else:
+                    conn.execute("DELETE FROM pending WHERE id=?", (pid,))
+                    conn.commit()
+                    try: bot.send_message(uploader_id, f"❌ Сіздің {content_type} файлыңыз қабылданбады.")
+                    except: pass
+                    bot.answer_callback_query(call.id, "Файл қабылданбады!")
     conn.close()
 
 # ==========================================
@@ -257,11 +277,11 @@ def text_handler(message):
         conn.close()
         return
 
-    # --- VIDEO VIEW ---
+    # VIDEO VIEW
     if text == "🎥 Видео көру":
         if not check_subscription(user_id):
             bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
-        elif not user_data[4] and user_data[1] < 2:  # VIP болса тегін
+        elif not user_data[4] and user_data[1] < 2:
             bot.send_message(user_id, get_ref_msg(user_id), parse_mode="Markdown")
         else:
             vid = conn.execute("SELECT file_id FROM videos ORDER BY id ASC LIMIT 1 OFFSET ?", (user_data[2],)).fetchone()
@@ -273,7 +293,7 @@ def text_handler(message):
                     conn.commit()
             else: bot.send_message(user_id, "😔 Видеолар таусылды.")
 
-    # --- PHOTO VIEW ---
+    # PHOTO VIEW
     elif text == "🖼 Фото көру":
         if not check_subscription(user_id):
             bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
@@ -289,35 +309,51 @@ def text_handler(message):
                     conn.commit()
             else: bot.send_message(user_id, "😔 Фотолар таусылды.")
 
-    # --- ADMIN BONUS ---
+    # ADMIN BONUS
     elif text == "💰 Бонус беру" and user_id == ADMIN_ID:
         bot.send_message(ADMIN_ID, "⚡️ Бонус беру форматы: ID сома (Мысалы: 123456789 100)", parse_mode="Markdown")
         bot.register_next_step_handler(message, process_bonus)
 
-    # --- ADMIN PENDING ---
+    # ADMIN PENDING
     elif text == "✅ Pending файлдар" and user_id == ADMIN_ID:
-        p = conn.execute("SELECT id, uploader_id, content_type, file_id FROM pending LIMIT 1").fetchone()
-        if p:
-            markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("✅ Мақұлдау", callback_data=f"appr_{p[0]}"))
-            markup.add(InlineKeyboardButton("❌ Реджект", callback_data=f"reject_{p[0]}"))
-            if p[2] == 'video':
-                bot.send_video(ADMIN_ID, p[3], caption=f"ID: {p[1]}", reply_markup=markup)
-            else:
-                bot.send_photo(ADMIN_ID, p[3], caption=f"ID: {p[1]}", reply_markup=markup)
-        else:
+        pending_files = conn.execute("SELECT id, uploader_id, content_type, file_id FROM pending ORDER BY id ASC").fetchall()
+        if not pending_files:
             bot.send_message(ADMIN_ID, "Тізім бос.")
+        else:
+            for p in pending_files:
+                markup = InlineKeyboardMarkup()
+                markup.add(InlineKeyboardButton("✅ Мақұлдау", callback_data=f"appr_{p[0]}"))
+                markup.add(InlineKeyboardButton("❌ Реджект", callback_data=f"reject_{p[0]}"))
+                if p[2] == 'video':
+                    bot.send_video(ADMIN_ID, p[3], caption=f"ID: {p[1]}", reply_markup=markup)
+                else:
+                    bot.send_photo(ADMIN_ID, p[3], caption=f"ID: {p[1]}", reply_markup=markup)
 
-    # --- ADMIN STATS ---
+    # ADMIN STATS
     elif text == "📊 Статистика" and user_id == ADMIN_ID:
-        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        bot.send_message(ADMIN_ID, f"👥 Пайдаланушылар: {count}")
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        total_videos = conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
+        total_photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+        
+        blocked_users = 0
+        users_list = conn.execute("SELECT user_id FROM users").fetchall()
+        for u in users_list:
+            try:
+                bot.send_chat_action(u[0], 'typing')
+            except:
+                blocked_users += 1
 
+        stats_msg = (
+            f"📊 Бот статистикасы:\n\n"
+            f"👥 Пайдаланушылар: {total_users}\n"
+            f"🎥 Видеолар саны: {total_videos}\n"
+            f"🖼 Фотолар саны: {total_photos}\n"
+            f"🚫 Ботты бұғаттағандар: {blocked_users}"
+        )
+        bot.send_message(ADMIN_ID, stats_msg)
     conn.close()
 
-# ==========================================
 # PROCESS BONUS
-# ==========================================
 def process_bonus(message):
     try:
         data = message.text.split()
@@ -327,14 +363,13 @@ def process_bonus(message):
         conn.commit()
         conn.close()
         bot.send_message(ADMIN_ID, "✅ Бонус берілді.")
-        try: bot.send_message(target_id, f"🎁 Админ сізге {amount}💸 бонус берді!")
+        try: bot.send_message(target_id, f"🎁 Сізге админнен бонус келді: +{amount}💸")
         except: pass
-    except: bot.send_message(ADMIN_ID, "❌ Қате.")
+    except:
+        bot.send_message(ADMIN_ID, "❌ Қате формат. Қайталап көріңіз.")
 
 # ==========================================
 # RUN BOT
 # ==========================================
-if __name__ == "__main__":
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.infinity_polling()
+logger.info("Bot is polling...")
+bot.infinity_polling()
