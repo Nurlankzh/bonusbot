@@ -11,12 +11,10 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 # ===== CONFIG =====
 TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
 ADMIN_ID = 6303091468
-
 REF_LINK = "https://t.me/Darvinuyatszdaribot?start=6303091468"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
-
 logging.basicConfig(level=logging.INFO)
 
 # ===== DB =====
@@ -33,10 +31,8 @@ async def init_db():
             streak INTEGER DEFAULT 0
         )
         """)
-
         await db.execute("CREATE TABLE IF NOT EXISTS videos (id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT UNIQUE)")
         await db.execute("CREATE TABLE IF NOT EXISTS photos (id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT UNIQUE)")
-
         await db.execute("""
         CREATE TABLE IF NOT EXISTS pending (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,16 +77,18 @@ async def start(msg: Message):
         "🎥 Видео көр\n"
         "🖼 Фото аш\n"
         "💰 Бонус жина\n\n"
-        "👇 Бастау үшін таңда:",
+        "👇 Таңда:",
         reply_markup=main_kb(msg.from_user.id)
     )
 
-# ===== BONUS INFO =====
+# ===== BONUS =====
 @dp.message(F.text == "⭐ Бонус")
 async def bonus(msg: Message):
-    u = await db_query("SELECT bonus FROM users WHERE user_id=?", (msg.from_user.id,), "one")
+    u = await db_query("SELECT bonus, is_vip FROM users WHERE user_id=?", (msg.from_user.id,), "one")
+    status = "💎 VIP" if u[1] else "👤 Қарапайым"
 
     await msg.answer(
+        f"{status}\n\n"
         f"💰 Баланс: {u[0]}\n\n"
         f"👥 Дос шақыр:\n{REF_LINK}\n\n"
         f"🔥 Әр адам = +10 бонус"
@@ -100,7 +98,6 @@ async def bonus(msg: Message):
 @dp.message(F.text == "🎁 Күндік бонус")
 async def daily(msg: Message):
     u = await db_query("SELECT last_bonus_date, streak FROM users WHERE user_id=?", (msg.from_user.id,), "one")
-
     today = datetime.now().date().isoformat()
 
     if u[0] == today:
@@ -114,6 +111,34 @@ async def daily(msg: Message):
 
     await msg.answer(f"🎁 +{bonus} бонус\n🔥 Серия: {streak}")
 
+# ===== VIP =====
+@dp.message(F.text == "💎 VIP")
+async def vip(msg: Message):
+    await msg.answer(
+        "💎 VIP РЕЖИМ\n\n"
+        "♾ Шексіз контент\n"
+        "🚫 Бонус кетпейді\n\n"
+        "💰 Бағасы: 100 бонус\n\n"
+        "👇 Таңда:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Бонуспен алу", callback_data="buy_vip")],
+            [InlineKeyboardButton(text="💬 Менеджер", url="https://t.me/Kazhabs")]
+        ])
+    )
+
+@dp.callback_query(F.data == "buy_vip")
+async def buy_vip(call: CallbackQuery):
+    u = await db_query("SELECT bonus, is_vip FROM users WHERE user_id=?", (call.from_user.id,), "one")
+
+    if u[1]:
+        return await call.answer("Сенде VIP бар")
+
+    if u[0] < 100:
+        return await call.answer("❌ Бонус жетпейді", show_alert=True)
+
+    await db_query("UPDATE users SET bonus=bonus-100, is_vip=1 WHERE user_id=?", (call.from_user.id,))
+    await call.message.edit_text("💎 VIP қосылды! 🔥")
+
 # ===== MEDIA LOOP =====
 @dp.message(F.text.in_(["🎥 Видео", "🖼 Фото"]))
 async def media(msg: Message):
@@ -122,8 +147,9 @@ async def media(msg: Message):
     is_video = msg.text == "🎥 Видео"
     table = "videos" if is_video else "photos"
     cost = 4 if is_video else 2
+    is_vip = u[4]
 
-    if u[1] < cost:
+    if not is_vip and u[1] < cost:
         return await msg.answer(
             "❌ Бонусың бітіп қалды!\n\n"
             f"👥 Дос шақыр:\n{REF_LINK}\n\n"
@@ -136,7 +162,6 @@ async def media(msg: Message):
                            (last_id,), "one")
 
     if not media:
-        # LOOP
         await db_query(f"UPDATE users SET {'last_vid_id' if is_video else 'last_pic_id'}=0 WHERE user_id=?",
                        (msg.from_user.id,))
         media = await db_query(f"SELECT id, file_id FROM {table} ORDER BY id LIMIT 1", fetch="one")
@@ -151,7 +176,8 @@ async def media(msg: Message):
         await msg.answer_photo(media[1], caption="📸 Жаңа фото")
         await db_query("UPDATE users SET last_pic_id=? WHERE user_id=?", (media[0], msg.from_user.id))
 
-    await db_query("UPDATE users SET bonus=bonus-? WHERE user_id=?", (cost, msg.from_user.id))
+    if not is_vip:
+        await db_query("UPDATE users SET bonus=bonus-? WHERE user_id=?", (cost, msg.from_user.id))
 
 # ===== UPLOAD =====
 @dp.message(F.video | F.photo)
@@ -164,21 +190,19 @@ async def upload(msg: Message):
 
     await msg.answer("⏳ Админ тексеруде...")
 
-# ===== ADMIN PENDING LOOP =====
+# ===== PENDING LOOP =====
 @dp.message(F.text == "⏳ Pending", F.from_user.id == ADMIN_ID)
 async def pending(msg: Message):
     item = await db_query("SELECT * FROM pending ORDER BY id LIMIT 1", fetch="one")
 
     if not item:
-        return await msg.answer("📂 Pending бос")
+        return await msg.answer("📂 Бос")
 
     _, u_id, f_id, f_type = item
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Мақұлдау", callback_data=f"ok_{item[0]}"),
-            InlineKeyboardButton(text="❌ Бас тарту", callback_data=f"no_{item[0]}")
-        ]
+        [InlineKeyboardButton(text="✅", callback_data=f"ok_{item[0]}"),
+         InlineKeyboardButton(text="❌", callback_data=f"no_{item[0]}")]
     ])
 
     if f_type == "video":
@@ -186,40 +210,30 @@ async def pending(msg: Message):
     else:
         await msg.answer_photo(f_id, caption=f"👤 {u_id}", reply_markup=kb)
 
-# ===== APPROVE =====
 @dp.callback_query(F.data.startswith("ok_"))
-async def approve(call: CallbackQuery):
+async def ok(call: CallbackQuery):
     db_id = call.data.split("_")[1]
-
     data = await db_query("SELECT * FROM pending WHERE id=?", (db_id,), "one")
 
-    if not data:
-        return await call.answer("Жоқ")
-
     u_id, f_id, f_type = data[1], data[2], data[3]
-
     table = "videos" if f_type == "video" else "photos"
 
-    await db_query(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
-
+    await db_query(f"INSERT INTO {table} (file_id) VALUES (?)", (f_id,))
     bonus = 12 if f_type == "video" else 6
-    await db_query("UPDATE users SET bonus=bonus+? WHERE user_id=?", (bonus, u_id))
 
+    await db_query("UPDATE users SET bonus=bonus+? WHERE user_id=?", (bonus, u_id))
     await db_query("DELETE FROM pending WHERE id=?", (db_id,))
 
     try:
-        await bot.send_message(u_id, f"✅ Файлың қабылданды! +{bonus} бонус")
+        await bot.send_message(u_id, f"✅ Қабылданды! +{bonus} бонус")
     except:
         pass
 
     await call.message.delete()
-
-    # NEXT AUTO
     await pending(call.message)
 
-# ===== REJECT =====
 @dp.callback_query(F.data.startswith("no_"))
-async def reject(call: CallbackQuery):
+async def no(call: CallbackQuery):
     db_id = call.data.split("_")[1]
 
     await db_query("DELETE FROM pending WHERE id=?", (db_id,))
