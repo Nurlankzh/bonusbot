@@ -1,60 +1,59 @@
 import asyncio
 import logging
 import aiosqlite
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from aiogram.filters import Command
-from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.exceptions import TelegramForbiddenError
 
-# =================== НАСТРОЙКАЛАР (SETTINGS) ===================
+# =================== НАСТРОЙКАЛАР ===================
 API_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo" 
 ADMIN_ID = 6303091468 
-CHANNEL_USERNAME = "@uyatsizoqiga"  # Тексерілетін арна
+CHANNEL_USERNAME = "@uyatsizoqiga"
 
-# Логтарды баптау
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
-# =================== МӘЛІМЕТТЕР БАЗАСЫ (DATABASE) ===================
+# FSM Күйлері
+class AdminStates(StatesGroup):
+    broadcast_text = State()
+    asking_bonus_all = State()
+    asking_user_id = State()
+    asking_bonus_single = State()
+
+# =================== МӘЛІМЕТТЕР БАЗАСЫ ===================
 async def init_db():
-    """Базаны және кестелерді құру"""
     async with aiosqlite.connect("bot.db") as db:
-        # Пайдаланушылар кестесі
+        # Пайдаланушылар
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 bonus INTEGER DEFAULT 10,
                 ref_id INTEGER,
                 last_video_index INTEGER DEFAULT 0,
-                last_photo_index INTEGER DEFAULT 0,
-                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_photo_index INTEGER DEFAULT 0
             )
         """)
-        # Видеолар кестесі
+        # Мақұлданған медиа
+        await db.execute("CREATE TABLE IF NOT EXISTS videos (id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT UNIQUE)")
+        await db.execute("CREATE TABLE IF NOT EXISTS photos (id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT UNIQUE)")
+        # Күтудегі файлдар (Pending)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS videos (
+            CREATE TABLE IF NOT EXISTS pending_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id TEXT UNIQUE
-            )
-        """)
-        # Фотолар кестесі
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS photos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id TEXT UNIQUE
+                user_id INTEGER,
+                file_id TEXT,
+                file_type TEXT
             )
         """)
         await db.commit()
-        logger.info("Мәліметтер базасы сәтті іске қосылды.")
 
-# Базамен жұмыс істеу функциялары
 async def db_execute(query, params=()):
     async with aiosqlite.connect("bot.db") as db:
         await db.execute(query, params)
@@ -65,227 +64,216 @@ async def db_fetch_one(query, params=()):
         async with db.execute(query, params) as cur:
             return await cur.fetchone()
 
-# =================== ТЕКСЕРУ ЖҮЙЕСІ (CHECKS) ===================
+# =================== ТЕКСЕРУ ЖҮЙЕСІ ===================
 async def is_subscribed(user_id):
-    """Арнаға тіркелуді қатаң тексеру"""
-    if user_id == ADMIN_ID:
-        return True
+    if user_id == ADMIN_ID: return True
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        if member.status in ["member", "administrator", "creator"]:
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"Тексеру қатесі ({user_id}): {e}")
-        return False
+        return member.status in ["member", "administrator", "creator"]
+    except: return False
 
-# =================== МЕНЮЛАР (KEYBOARDS) ===================
+# =================== МЕНЮЛАР ===================
 def main_menu(user_id):
     kb = [
         [KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото")],
-        [KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="✅ VIP режим")]
+        [KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 ФОТО/ВИДЕО ЖІБЕРУ")],
+        [KeyboardButton(text="✅ VIP режим")]
     ]
     if user_id == ADMIN_ID:
-        kb.append([KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📢 Рассылка")])
-    
+        kb.append([KeyboardButton(text="👤 Жеке бонус"), KeyboardButton(text="👥 Жалпы бонус")])
+        kb.append([KeyboardButton(text="⏳ Pending файлдар"), KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📢 Рассылка")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# =================== НЕГІЗГІ ЛОГИКА (MEDIA HANDLERS) ===================
-async def send_media_sequentially(msg: Message, media_type: str):
-    """Медианы кезегімен жіберу функциясы"""
-    user_id = msg.from_user.id
-    
-    # 1. Тіркелуді тексеру
-    if not await is_subscribed(user_id):
-        await msg.answer(f"❌ Ботты қолдану үшін алдымен арнаға тіркеліңіз:\n{CHANNEL_USERNAME}")
-        return
+def pending_kb(db_id, f_type):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Мақұлдау", callback_query_data=f"app_{f_type}_{db_id}"),
+            InlineKeyboardButton(text="❌ Мақұлдамау", callback_query_data=f"dec_{db_id}")
+        ]
+    ])
 
-    # 2. Бонусты тексеру
-    bonus_needed = 3 if media_type == "videos" else 2
-    user_data = await db_fetch_one("SELECT bonus, last_video_index, last_photo_index FROM users WHERE user_id=?", (user_id,))
-    
-    if not user_data:
-        await msg.answer("Қателік: Пайдаланушы табылмады. /start басыңыз.")
-        return
-    
-    current_bonus = user_data[0]
-    if current_bonus < bonus_needed and user_id != ADMIN_ID:
-        await msg.answer(f"❌ Бонус жеткіліксіз!\nСізге: {bonus_needed} бонус керек.\nҚазіргі баланс: {current_bonus}")
-        return
-
-    # 3. Кезекті анықтау
-    table = media_type
-    idx_column = "last_video_index" if media_type == "videos" else "last_photo_index"
-    current_idx = user_data[1] if media_type == "videos" else user_data[2]
-
-    # Жалпы санын алу
-    total_count_row = await db_fetch_one(f"SELECT COUNT(*) FROM {table}")
-    total_count = total_count_row[0]
-
-    if total_count == 0:
-        await msg.answer(f"⚠️ {media_type} базасы әзірге бос. Админ жақында қосады!")
-        return
-
-    # Егер қолданушы бәрін көріп бітірсе, басынан бастайды
-    if current_idx >= total_count:
-        current_idx = 0
-
-    # Файлды алу
-    media_row = await db_fetch_one(f"SELECT file_id FROM {table} ORDER BY id LIMIT 1 OFFSET ?", (current_idx,))
-    
-    if media_row:
-        file_id = media_row[0]
-        try:
-            if media_type == "videos":
-                await bot.send_video(msg.chat.id, file_id, caption="✅ Тамашалаңыз!")
-            else:
-                await bot.send_photo(msg.chat.id, file_id, caption="✅ Тамашалаңыз!")
-            
-            # 4. Бонусты шегеріп, индексті жаңарту
-            new_idx = current_idx + 1
-            await db_execute(f"UPDATE users SET bonus = bonus - ?, {idx_column} = ? WHERE user_id = ?", 
-                           (bonus_needed if user_id != ADMIN_ID else 0, new_idx, user_id))
-            
-        except Exception as e:
-            logger.error(f"Медиа жіберу қатесі: {e}")
-            await msg.answer("❌ Файлды жіберу кезінде қате шықты. Базадағы файл өшірілген болуы мүмкін.")
-    else:
-        await msg.answer("❌ Кезекті анықтау мүмкін болмады.")
-
-# =================== ХЕНДЛЕРЛЕР (HANDLERS) ===================
+# =================== НЕГІЗГІ ЛОГИКА ===================
 
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     user_id = msg.from_user.id
-    
-    # Реферал жүйесі
     args = msg.text.split()
-    ref_id = None
-    if len(args) > 1 and args[1].isdigit():
-        ref_id = int(args[1])
+    ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    # Пайдаланушыны базаға қосу
-    async with aiosqlite.connect("bot.db") as db:
-        async with db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)) as cur:
-            exists = await cur.fetchone()
-            
-            if not exists:
-                await db.execute("INSERT INTO users (user_id, ref_id) VALUES (?, ?)", (user_id, ref_id))
-                await db.commit()
-                # Шақырған адамға бонус беру
-                if ref_id and ref_id != user_id:
-                    await db.execute("UPDATE users SET bonus = bonus + 2 WHERE user_id = ?", (ref_id,))
-                    await db.commit()
-                    try:
-                        await bot.send_message(ref_id, "🎉 Сіздің сілтемеңізбен жаңа қолданушы тіркелді! +2 бонус берілді.")
-                    except: pass
+    user = await db_fetch_one("SELECT 1 FROM users WHERE user_id=?", (user_id,))
+    if not user:
+        await db_execute("INSERT INTO users (user_id, ref_id) VALUES (?, ?)", (user_id, ref_id))
+        if ref_id and ref_id != user_id:
+            await db_execute("UPDATE users SET bonus = bonus + 2 WHERE user_id=?", (ref_id,))
+            try: await bot.send_message(ref_id, "🎁 Реферал үшін +2 бонус берілді!")
+            except: pass
 
     if not await is_subscribed(user_id):
-        await msg.answer(f"👋 Сәлем! Ботты іске қосу үшін арнаға тіркелуіңіз керек:\n{CHANNEL_USERNAME}\n\nТіркелген соң қайта /start басыңыз.")
+        await msg.answer(f"❌ Арнаға тіркеліңіз: {CHANNEL_USERNAME}\nСосын қайта /start басыңыз.")
     else:
-        bonus = await db_fetch_one("SELECT bonus FROM users WHERE user_id=?", (user_id,))
-        await msg.answer(f"👋 Қайта қош келдіңіз!\n💰 Сіздің бонусыңыз: {bonus[0]}", 
-                         reply_markup=main_menu(user_id))
+        await msg.answer("Қош келдіңіз!", reply_markup=main_menu(user_id))
 
-@dp.message(F.text == "🎥 Видео")
-async def handle_video(msg: Message):
-    await send_media_sequentially(msg, "videos")
-
-@dp.message(F.text == "🖼 Фото")
-async def handle_photo(msg: Message):
-    await send_media_sequentially(msg, "photos")
-
-@dp.message(F.text == "✅ VIP режим")
-async def handle_vip(msg: Message):
-    await msg.answer("💎 **VIP РЕЖИМ**\n\nБонустар сатып алу немесе VIP статус алу үшін біздің менеджерге жазыңыз:\n\n👉 @Kazhabs\n\nТөлем қабылдаған соң бонустар 5 минут ішінде салынады.")
-
-@dp.message(F.text == "⭐ Бонус")
-async def handle_bonus(msg: Message):
-    bot_info = await bot.get_me()
-    link = f"https://t.me/{bot_info.username}?start={msg.from_user.id}"
-    await msg.answer(f"🎁 **ТЕГІН БОНУС АЛУ**\n\nТөмендегі сілтемені достарыңызға жіберіңіз. Әр тіркелген дос үшін сізге +2 бонус беріледі!\n\n🔗 Сілтеме:\n`{link}`", parse_mode="Markdown")
-
-# =================== АДМИН ПАНЕЛЬ (ADMIN) ===================
-
-@dp.message(F.text == "📊 Статистика", F.from_user.id == ADMIN_ID)
-async def admin_stats(msg: Message):
-    user_count = await db_fetch_one("SELECT COUNT(*) FROM users")
-    video_count = await db_fetch_one("SELECT COUNT(*) FROM videos")
-    photo_count = await db_fetch_one("SELECT COUNT(*) FROM photos")
+# --- МЕДИА КӨРУ ---
+async def show_media(msg: Message, m_type: str):
+    u_id = msg.from_user.id
+    if not await is_subscribed(u_id): return
     
-    text = (f"📊 **БОТ СТАТИСТИКАСЫ**\n\n"
-            f"👥 Қолданушылар: {user_count[0]}\n"
-            f"🎥 Видеолар саны: {video_count[0]}\n"
-            f"🖼 Фотолар саны: {photo_count[0]}")
-    await msg.answer(text, parse_mode="Markdown")
-
-@dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
-async def admin_broadcast_prompt(msg: Message):
-    await msg.answer("📢 Рассылка мәтінін жазыңыз. Барлық пайдаланушыларға жіберіледі:")
-
-@dp.message(F.from_user.id == ADMIN_ID, F.text)
-async def process_admin_text(msg: Message):
-    # Мәзір батырмалары болса тоқтату
-    if msg.text in ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "✅ VIP режим", "📊 Статистика", "📢 Рассылка"]:
+    cost = 3 if m_type == "videos" else 2
+    user_data = await db_fetch_one("SELECT bonus, last_video_index, last_photo_index FROM users WHERE user_id=?", (u_id,))
+    
+    if user_data[0] < cost and u_id != ADMIN_ID:
+        await msg.answer(f"❌ Бонус жетпейді! Керек: {cost}, Сөзде: {user_data[0]}")
         return
 
-    await msg.answer("📤 Тарату басталды...")
+    idx = user_data[1] if m_type == "videos" else user_data[2]
+    table = m_type
+    
+    media = await db_fetch_one(f"SELECT file_id FROM {table} ORDER BY id LIMIT 1 OFFSET ?", (idx,))
+    if not media:
+        await msg.answer("⚠️ Файлдар таусылды немесе база бос.")
+        return
+
+    try:
+        if m_type == "videos":
+            await msg.answer_video(media[0], caption="✅ Тамашалаңыз!")
+            await db_execute("UPDATE users SET bonus=bonus-?, last_video_index=? WHERE user_id=?", (cost if u_id != ADMIN_ID else 0, idx+1, u_id))
+        else:
+            await msg.answer_photo(media[0], caption="✅ Тамашалаңыз!")
+            await db_execute("UPDATE users SET bonus=bonus-?, last_photo_index=? WHERE user_id=?", (cost if u_id != ADMIN_ID else 0, idx+1, u_id))
+    except:
+        await msg.answer("❌ Файл қатесі.")
+
+@dp.message(F.text == "🎥 Видео")
+async def btn_video(msg: Message): await show_media(msg, "videos")
+
+@dp.message(F.text == "🖼 Фото")
+async def btn_photo(msg: Message): await show_media(msg, "photos")
+
+# --- ФАЙЛ ЖІБЕРУ (PENDING) ---
+@dp.message(F.text == "📤 ФОТО/ВИДЕО ЖІБЕРУ")
+async def btn_send_info(msg: Message):
+    await msg.answer("Ботқа видео немесе фото жіберіп бонус алыңыз!\n🎬 1 видео = 12 бонус\n🖼 1 фото = 10 бонус\n\nҚазір жіберіңіз:")
+
+@dp.message(F.video | F.photo)
+async def handle_uploads(msg: Message):
+    if msg.from_user.id == ADMIN_ID:
+        # Админ жібергенді тікелей базаға қосу (Тез қосу үшін)
+        if msg.video:
+            await db_execute("INSERT INTO videos (file_id) VALUES (?)", (msg.video.file_id,))
+        else:
+            await db_execute("INSERT INTO photos (file_id) VALUES (?)", (msg.photo[-1].file_id,))
+        await msg.answer("✅ Админ, файл базаға қосылды.")
+        return
+
+    f_id = msg.video.file_id if msg.video else msg.photo[-1].file_id
+    f_type = "video" if msg.video else "photo"
+    
+    await db_execute("INSERT INTO pending_files (user_id, file_id, file_type) VALUES (?, ?, ?)", (msg.from_user.id, f_id, f_type))
+    await msg.answer("⏳ Файл қабылданды! Админ тексерген соң бонус түседі.")
+
+# --- АДМИН: PENDING ПАНЕЛЬ ---
+@dp.message(F.text == "⏳ Pending файлдар", F.from_user.id == ADMIN_ID)
+async def admin_pending(msg: Message):
+    file = await db_fetch_one("SELECT id, user_id, file_id, file_type FROM pending_files LIMIT 1")
+    if not file:
+        await msg.answer("Кезек таза!")
+        return
+    
+    db_id, u_id, f_id, f_type = file
+    cap = f"Кімнен: {u_id}\nТүрі: {f_type}"
+    if f_type == "video":
+        await msg.answer_video(f_id, caption=cap, reply_markup=pending_kb(db_id, "video"))
+    else:
+        await msg.answer_photo(f_id, caption=cap, reply_markup=pending_kb(db_id, "photo"))
+
+@dp.callback_query(F.data.startswith("app_") | F.data.startswith("dec_"))
+async def admin_decision(call: CallbackQuery):
+    data = call.data.split("_")
+    action = data[0]
+    db_id = data[-1]
+    
+    file = await db_fetch_one("SELECT user_id, file_id, file_type FROM pending_files WHERE id=?", (db_id,))
+    if not file: return
+
+    u_id, f_id, f_type = file
+    if action == "app":
+        bonus = 12 if f_type == "video" else 10
+        table = "videos" if f_type == "video" else "photos"
+        await db_execute(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
+        await db_execute("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, u_id))
+        try: await bot.send_message(u_id, f"✅ Мақұлданды! +{bonus} бонус берілді.")
+        except: pass
+    else:
+        try: await bot.send_message(u_id, "❌ Файлыңыз мақұлданбады. Басқа файл жіберіңіз.")
+        except: pass
+
+    await db_execute("DELETE FROM pending_files WHERE id=?", (db_id,))
+    await call.message.delete()
+    await admin_pending(call.message)
+
+# --- АДМИН: БОНУС БЕРУ ---
+@dp.message(F.text == "👤 Жеке бонус", F.from_user.id == ADMIN_ID)
+async def adm_single(msg: Message, state: FSMContext):
+    await msg.answer("Қолданушы ID жазыңыз:")
+    await state.set_state(AdminStates.asking_user_id)
+
+@dp.message(AdminStates.asking_user_id)
+async def adm_id_step(msg: Message, state: FSMContext):
+    await state.update_data(uid=msg.text)
+    await msg.answer("Қанша бонус?")
+    await state.set_state(AdminStates.asking_bonus_single)
+
+@dp.message(AdminStates.asking_bonus_single)
+async def adm_final_single(msg: Message, state: FSMContext):
+    data = await state.get_data()
+    amt, uid = int(msg.text), int(data['uid'])
+    await db_execute("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (amt, uid))
+    await msg.answer(f"✅ {uid}-ге {amt} бонус берілді.")
+    await state.clear()
+
+@dp.message(F.text == "👥 Жалпы бонус", F.from_user.id == ADMIN_ID)
+async def adm_all(msg: Message, state: FSMContext):
+    await msg.answer("Барлығына қанша бонус?")
+    await state.set_state(AdminStates.asking_bonus_all)
+
+@dp.message(AdminStates.asking_bonus_all)
+async def adm_final_all(msg: Message, state: FSMContext):
+    amt = int(msg.text)
+    await db_execute("UPDATE users SET bonus = bonus + ?", (amt,))
+    await msg.answer(f"✅ Барлығына {amt} бонус берілді.")
+    await state.clear()
+
+# --- БАСҚА ФУНКЦИЯЛАР ---
+@dp.message(F.text == "⭐ Бонус")
+async def btn_bonus(msg: Message):
+    me = await bot.get_me()
+    await msg.answer(f"🎁 Дос шақырып 2 бонус ал:\n`https://t.me/{me.username}?start={msg.from_user.id}`", parse_mode="Markdown")
+
+@dp.message(F.text == "📊 Статистика", F.from_user.id == ADMIN_ID)
+async def adm_stats(msg: Message):
+    users = await db_fetch_one("SELECT COUNT(*) FROM users")
+    await msg.answer(f"👥 Қолданушылар: {users[0]}")
+
+@dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
+async def adm_broad(msg: Message, state: FSMContext):
+    await msg.answer("Мәтінді жазыңыз:")
+    await state.set_state(AdminStates.broadcast_text)
+
+@dp.message(AdminStates.broadcast_text)
+async def adm_broad_send(msg: Message, state: FSMContext):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT user_id FROM users") as cur:
             users = await cur.fetchall()
-    
-    count = 0
-    for user in users:
-        try:
-            await bot.send_message(user[0], msg.text)
-            count += 1
-            await asyncio.sleep(0.05) # Серверге күш түсірмеу үшін
-        except (TelegramForbiddenError, Exception):
-            continue
-            
-    await msg.answer(f"✅ Рассылка аяқталды. {count} адамға жіберілді.")
+    for u in users:
+        try: await bot.send_message(u[0], msg.text); await asyncio.sleep(0.05)
+        except: continue
+    await msg.answer("✅ Таратылды.")
+    await state.clear()
 
-# Видео сақтау (Админ видео жібергенде)
-@dp.message(F.video, F.from_user.id == ADMIN_ID)
-async def admin_save_video(msg: Message):
-    try:
-        await db_execute("INSERT INTO videos (file_id) VALUES (?)", (msg.video.file_id,))
-        await msg.answer("✅ Видео базаға сәтті қосылды және кезекке тұрды.")
-    except aiosqlite.IntegrityError:
-        await msg.answer("❌ Бұл видео базада бар!")
-
-# Фото сақтау (Админ фото жібергенде)
-@dp.message(F.photo, F.from_user.id == ADMIN_ID)
-async def admin_save_photo(msg: Message):
-    try:
-        # Ең жоғарғы сападағы фотоны алу
-        file_id = msg.photo[-1].file_id
-        await db_execute("INSERT INTO photos (file_id) VALUES (?)", (file_id,))
-        await msg.answer("✅ Фото базаға сәтті қосылды және кезекке тұрды.")
-    except aiosqlite.IntegrityError:
-        await msg.answer("❌ Бұл фото базада бар!")
-
-# =================== SCHEDULER (АВТО БОНУС) ===================
-async def daily_bonus_job():
-    """Әр 12 сағат сайын барлығына 5 бонус беру"""
-    await db_execute("UPDATE users SET bonus = bonus + 5")
-    logger.info("Автоматты бонустар үлестірілді.")
-
-# =================== MAIN (STARTUP) ===================
+# =================== ІСКЕ ҚОСУ ===================
 async def main():
-    # Базаны дайындау
     await init_db()
-    
-    # Шедулерді іске қосу
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(daily_bonus_job, 'interval', hours=12)
-    scheduler.start()
-    
-    logger.info("Бот қосылды!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот тоқтатылды.")
+    asyncio.run(main())
