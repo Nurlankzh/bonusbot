@@ -72,7 +72,30 @@ async def bonus_hint(msg: Message):
         "2️⃣ Бонус сомасын енгізіңіз\n\n"
         "Мысалы:\n6303091468\n100"
     )
+@dp.message(F.from_user.id == ADMIN_ID)
+async def bonus_process(msg: Message):
+    state = bonus_state.get(msg.from_user.id)
+    if not state:
+        return
 
+    text = msg.text.strip()  # артық бос орындарды тазалау
+    if state["step"] == 1:
+        if not text.isdigit():
+            await msg.answer("❌ ID дұрыс емес, тек сандармен жазу керек. Қайта енгізіңіз:")
+            return
+        user_id = int(text)
+        state["user_id"] = user_id
+        state["step"] = 2
+        await msg.answer(f"✅ ID қабылданды: {user_id}\nЕнді бонус сомасын енгізіңіз:")
+    elif state["step"] == 2:
+        if not text.isdigit():
+            await msg.answer("❌ Сома дұрыс емес, тек сандармен жазу керек. Қайта енгізіңіз:")
+            return
+        amount = int(text)
+        user_id = state["user_id"]
+        await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (amount, user_id))
+        await msg.answer(f"🎉 {amount} бонус {user_id}-ға сәтті қосылды!")
+        bonus_state.pop(msg.from_user.id, None)
 @dp.message(F.from_user.id == ADMIN_ID)
 async def bonus_process(msg: Message):
     state = bonus_state.get(msg.from_user.id)
