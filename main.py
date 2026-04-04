@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # ===== CONFIG =====
-TOKEN = "PUT_YOUR_TOKEN_HERE"
+TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
 ADMIN_ID = 6303091468
 REF_LINK = "https://t.me/Darvinuyatszdaribot?start=6303091468"
 
