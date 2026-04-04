@@ -7,9 +7,9 @@ import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ================= CONFIG =================
-BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
+BOT_TOKEN = "СЕНІҢ_ТОКЕНІҢІЗ"
 ADMIN_ID = 6303091468
-CHANNEL_USERNAME = "@uyatsizoqiga"
+CHANNEL_USERNAME = "@senin_kanalyngyz"
 REF_BOT_USERNAME = "@Deetskay_bot"
 VIP_CONTACT = "Kazhabs"
 DB_FILE = "data.db"
@@ -110,7 +110,7 @@ def file_exists(file_id, content_type):
     conn.close()
     return exists
 
-# ================= START =================
+# ================= START COMMAND =================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -171,12 +171,15 @@ def daily_bonus_handler(message):
     bot.send_message(user_id, "🎉 +10💸 бонус берілді!")
     conn.close()
 
-# ================= VIEW CONTENT =================
+# ================= VIEW VIDEO / PHOTO (ЦИКЛ) =================
 @bot.message_handler(func=lambda m: m.text in ["🎥 Видео көру", "🖼 Фото көру"])
 def view_content_handler(message):
     user_id = message.from_user.id
     conn = get_db_connection()
-    user_data = conn.execute("SELECT is_adult, balance, progress_video, progress_photo, is_vip FROM users WHERE user_id=?", (user_id,)).fetchone()
+    user_data = conn.execute(
+        "SELECT is_adult, balance, progress_video, progress_photo, is_vip FROM users WHERE user_id=?",
+        (user_id,)
+    ).fetchone()
     if not user_data or user_data[0] == 0:
         conn.close()
         return
@@ -184,7 +187,6 @@ def view_content_handler(message):
     is_vip = user_data[4]
     balance = user_data[1]
 
-    # Баланс 0 болса, тек реферал арқылы
     if balance <= 0 and not is_vip:
         bot.send_message(user_id, get_ref_msg(user_id))
         conn.close()
@@ -195,37 +197,44 @@ def view_content_handler(message):
             bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
             conn.close()
             return
-        vid = conn.execute("SELECT file_id FROM videos ORDER BY id ASC LIMIT 1 OFFSET ?", (user_data[2],)).fetchone()
-        if vid:
-            new_balance = balance if is_vip else balance - 2
-            bot.send_video(user_id, vid[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
-            with db_lock:
-                conn.execute("UPDATE users SET balance=?, progress_video=progress_video+1 WHERE user_id=?", (new_balance, user_id))
-                conn.commit()
-        else:
-            bot.send_message(user_id, "😔 Видеолар таусылды.")
+        total_videos = conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
+        if total_videos == 0:
+            bot.send_message(user_id, "😔 Видеолар әлі жоқ.")
+            conn.close()
+            return
+        offset = user_data[2] % total_videos
+        vid = conn.execute("SELECT file_id FROM videos ORDER BY id ASC LIMIT 1 OFFSET ?", (offset,)).fetchone()
+        new_balance = balance if is_vip else balance - 2
+        bot.send_video(user_id, vid[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
+        with db_lock:
+            conn.execute("UPDATE users SET balance=?, progress_video=progress_video+1 WHERE user_id=?", (new_balance, user_id))
+            conn.commit()
 
     elif message.text == "🖼 Фото көру":
         if not check_subscription(user_id):
             bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
             conn.close()
             return
-        pic = conn.execute("SELECT file_id FROM photos ORDER BY id ASC LIMIT 1 OFFSET ?", (user_data[3],)).fetchone()
-        if pic:
-            new_balance = balance if is_vip else balance - 3
-            bot.send_photo(user_id, pic[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
-            with db_lock:
-                conn.execute("UPDATE users SET balance=?, progress_photo=progress_photo+1 WHERE user_id=?", (new_balance, user_id))
-                conn.commit()
-        else:
-            bot.send_message(user_id, "😔 Фотолар таусылды.")
+        total_photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+        if total_photos == 0:
+            bot.send_message(user_id, "😔 Фотолар әлі жоқ.")
+            conn.close()
+            return
+        offset = user_data[3] % total_photos
+        pic = conn.execute("SELECT file_id FROM photos ORDER BY id ASC LIMIT 1 OFFSET ?", (offset,)).fetchone()
+        new_balance = balance if is_vip else balance - 3
+        bot.send_photo(user_id, pic[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
+        with db_lock:
+            conn.execute("UPDATE users SET balance=?, progress_photo=progress_photo+1 WHERE user_id=?", (new_balance, user_id))
+            conn.commit()
+
     conn.close()
 
 # ================= ADMIN ADD CONTENT =================
 @bot.message_handler(func=lambda m: m.text in ["➕ Видео қосу", "➕ Фото қосу"] and m.from_user.id == ADMIN_ID)
 def admin_add_content(message):
     user_id = message.from_user.id
-    bot.send_message(user_id, "📤 Файлды жіберіңіз (видео/фото):")
+    bot.send_message(user_id, "📤 Файлдарды бірден жіберуге болады (видео/фото):")
     bot.register_next_step_handler(message, handle_admin_upload)
 
 def handle_admin_upload(message):
