@@ -7,7 +7,7 @@ import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ================= CONFIG =================
-BOT_TOKEN = "СЕНІҢ_ТОКЕНІҢІЗ"
+BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@senin_kanalyngyz"
 REF_BOT_USERNAME = "@Deetskay_bot"
