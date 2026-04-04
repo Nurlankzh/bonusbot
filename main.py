@@ -4,10 +4,10 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
 
 # ================= CONFIG =================
-BOT_TOKEN = "СЕНІҢ_ТОКЕНІҢІЗ"
+BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@senin_kanalyngyz"
 REF_BOT_USERNAME = "@Deetskay_bot"
@@ -171,7 +171,7 @@ def daily_bonus_handler(message):
     bot.send_message(user_id, "🎉 +10💸 бонус берілді!")
     conn.close()
 
-# ================= VIEW VIDEO / PHOTO (ЦИКЛ) =================
+# ================= VIEW VIDEO / PHOTO =================
 @bot.message_handler(func=lambda m: m.text in ["🎥 Видео көру", "🖼 Фото көру"])
 def view_content_handler(message):
     user_id = message.from_user.id
@@ -187,7 +187,6 @@ def view_content_handler(message):
     is_vip = user_data[4]
     balance = user_data[1]
 
-    # Баланс тексеру
     if balance <= 0 and not is_vip:
         bot.send_message(user_id, get_ref_msg(user_id))
         conn.close()
@@ -203,7 +202,7 @@ def view_content_handler(message):
             bot.send_message(user_id, "😔 Видеолар әлі жоқ.")
             conn.close()
             return
-        offset = user_data[2] % total_videos  # цикл басынан
+        offset = user_data[2] % total_videos
         vid = conn.execute("SELECT file_id FROM videos ORDER BY id ASC LIMIT 1 OFFSET ?", (offset,)).fetchone()
         new_balance = balance if is_vip else balance - 2
         bot.send_video(user_id, vid[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
@@ -221,7 +220,7 @@ def view_content_handler(message):
             bot.send_message(user_id, "😔 Фотолар әлі жоқ.")
             conn.close()
             return
-        offset = user_data[3] % total_photos  # цикл басынан
+        offset = user_data[3] % total_photos
         pic = conn.execute("SELECT file_id FROM photos ORDER BY id ASC LIMIT 1 OFFSET ?", (offset,)).fetchone()
         new_balance = balance if is_vip else balance - 3
         bot.send_photo(user_id, pic[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
@@ -231,11 +230,11 @@ def view_content_handler(message):
 
     conn.close()
 
-# ================= ADMIN ADD CONTENT =================
+# ================= ADMIN ADD CONTENT (MULTIPLE) =================
 @bot.message_handler(func=lambda m: m.text in ["➕ Видео қосу", "➕ Фото қосу"] and m.from_user.id == ADMIN_ID)
 def admin_add_content(message):
     user_id = message.from_user.id
-    bot.send_message(user_id, "📤 Бірден бірнеше файл жіберуге болады (видео/фото):")
+    bot.send_message(user_id, "📤 Файлдарды бірден жіберуге болады (видео/фото):")
     bot.register_next_step_handler(message, handle_admin_upload)
 
 def handle_admin_upload(message):
@@ -244,31 +243,30 @@ def handle_admin_upload(message):
         return
 
     conn = get_db_connection()
-    # Видео
-    if message.content_type == "video":
-        file_ids = [message.video.file_id]
-        for file_id in file_ids:
-            if not file_exists(file_id, "video"):
-                with db_lock:
-                    conn.execute("INSERT INTO videos (file_id, added_at) VALUES (?, ?)", (file_id, datetime.now().isoformat()))
-                    conn.commit()
-                bot.send_message(user_id, "✅ Видео қосылды!")
-            else:
-                bot.send_message(user_id, "⚠️ Видео бұрын қосылған!")
 
-    # Фото (қатарынан)
+    # MEDIA GROUP
+    media_files = []
+    if message.content_type == "video":
+        media_files.append(("video", message.video.file_id))
     elif message.content_type == "photo":
-        file_ids = [p.file_id for p in message.photo]
-        for file_id in file_ids:
-            if not file_exists(file_id, "photo"):
-                with db_lock:
-                    conn.execute("INSERT INTO photos (file_id, added_at) VALUES (?, ?)", (file_id, datetime.now().isoformat()))
-                    conn.commit()
-                bot.send_message(user_id, "✅ Фото қосылды!")
-            else:
-                bot.send_message(user_id, "⚠️ Фото бұрын қосылған!")
-    else:
-        bot.send_message(user_id, "⚠️ Тек видео немесе фото жіберуге болады.")
+        media_files.append(("photo", message.photo[-1].file_id))
+    elif hasattr(message, "media_group_id") and message.media_group_id:
+        for m in message.media_group_id:
+            if m.content_type == "video":
+                media_files.append(("video", m.video.file_id))
+            elif m.content_type == "photo":
+                media_files.append(("photo", m.photo[-1].file_id))
+
+    for content_type, file_id in media_files:
+        if not file_exists(file_id, content_type):
+            with db_lock:
+                table = "videos" if content_type == "video" else "photos"
+                conn.execute(f"INSERT INTO {table} (file_id, added_at) VALUES (?, ?)", (file_id, datetime.now().isoformat()))
+                conn.commit()
+            bot.send_message(user_id, f"✅ {content_type.title()} қосылды!")
+        else:
+            bot.send_message(user_id, f"⚠️ {content_type.title()} бұрын қосылған!")
+
     conn.close()
 
 # ================= ADMIN STATS / BROADCAST =================
