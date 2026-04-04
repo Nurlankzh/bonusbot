@@ -1,299 +1,161 @@
-import os
-import logging
+import asyncio
+import random
 import sqlite3
-import threading
-from datetime import datetime, timedelta
-import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
+import logging
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command, CommandStart
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton
+from aiogram.exceptions import TelegramForbiddenError
 
-# ================= CONFIG =================
-BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
+# --- КОНФИГУРАЦИЯ ---
+TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
 ADMIN_ID = 6303091468
-CHANNEL_USERNAME = "@uyatsizoqiga"
-REF_BOT_USERNAME = "@Deetskay_bot"
-VIP_CONTACT = "Kazhabs"
-DB_FILE = "data.db"
+CHANNEL_ID = "@uyatsizoqiga" 
+CHANNEL_LINK = "https://t.me/uyatsizoqiga"
+MANAGER_USERNAME = "Kazhabs"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-bot = telebot.TeleBot(BOT_TOKEN)
-db_lock = threading.Lock()
+# --- ДЕРЕКТЕР ҚОРЫ (SQLite) ---
+db = sqlite3.connect("bot_logic.db")
+cur = db.cursor()
+cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, balance REAL DEFAULT 0, ref_count INTEGER DEFAULT 0)")
+cur.execute("CREATE TABLE IF NOT EXISTS content (file_id TEXT PRIMARY KEY, type TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS history (user_id INTEGER, file_id TEXT)")
+db.commit()
 
-# ================= DATABASE =================
-def get_db_connection():
-    return sqlite3.connect(DB_FILE, check_same_thread=False)
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    with db_lock:
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            balance INTEGER DEFAULT 3,
-            progress_video INTEGER DEFAULT 0,
-            progress_photo INTEGER DEFAULT 0,
-            invited_by INTEGER,
-            referral_count INTEGER DEFAULT 0,
-            is_adult INTEGER DEFAULT 0,
-            joined_at TEXT,
-            last_daily TEXT,
-            is_vip INTEGER DEFAULT 0
-        )""")
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS videos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id TEXT UNIQUE,
-            added_at TEXT
-        )""")
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS photos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id TEXT UNIQUE,
-            added_at TEXT
-        )""")
-        conn.commit()
-    conn.close()
-
-init_db()
-
-# ================= KEYBOARDS =================
-def get_main_keyboard(user_id):
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row(KeyboardButton("🎥 Видео көру"), KeyboardButton("🖼 Фото көру"))
-    kb.row(KeyboardButton("🎁 Күндік бонус алу"))
-    kb.row(KeyboardButton("💎 VIP алу"))
-    if user_id == ADMIN_ID:
-        kb.row(KeyboardButton("➕ Видео қосу"), KeyboardButton("➕ Фото қосу"))
-        kb.row(KeyboardButton("📊 Статистика"), KeyboardButton("📢 Рассылка"))
-    return kb
-
-# ================= HELPERS =================
-def ensure_user(user_id, invited_by=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    with db_lock:
-        user = cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if not user:
-            now = datetime.now().isoformat()
-            cursor.execute("INSERT INTO users (user_id, balance, invited_by, joined_at) VALUES (?, ?, ?, ?)",
-                           (user_id, 3, invited_by, now))
-            conn.commit()
-            if invited_by and invited_by != user_id:
-                cursor.execute("UPDATE users SET balance = balance + 6, referral_count = referral_count + 1 WHERE user_id=?", (invited_by,))
-                conn.commit()
-                ref_count = cursor.execute("SELECT referral_count FROM users WHERE user_id=?", (invited_by,)).fetchone()[0]
-                try:
-                    bot.send_message(invited_by, f"🎊 Сіз 1 жаңа адам шақырдыңыз!\n🎁 Бонус: +6💸\n📊 Барлық шақырылғандар: {ref_count} адам.")
-                except: pass
-    conn.close()
-
-def check_subscription(user_id):
-    if user_id == ADMIN_ID:
-        return True
+# --- ФУНКЦИЯЛАР ---
+async def check_sub(user_id):
     try:
-        member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ['member', 'administrator', 'creator']
+        chat_member = await bot.get_chat_member(CHANNEL_ID, user_id)
+        return chat_member.status in ["member", "administrator", "creator"]
     except:
         return False
 
-def get_ref_msg(user_id):
-    return (f"❌ Сіздің бонустарыңыз бітті!\n\n"
-            f"Жалғастыру үшін дос шақырыңыз. Әр дос үшін **+6💸** беріледі.\n"
-            f"🔗 Сіздің сілтемеңіз:\n`https://t.me/{Deetskay_bot}?start={user_id}`")
+def main_menu(user_id):
+    builder = ReplyKeyboardBuilder()
+    builder.add(KeyboardButton(text="🎥 Видео көру"), KeyboardButton(text="🖼 Фото көру"))
+    builder.add(KeyboardButton(text="💎 Канал сатып алу"), KeyboardButton(text="👤 Менің кабинетім"))
+    if user_id == ADMIN_ID:
+        builder.add(KeyboardButton(text="⚙️ Админ Панель"))
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
 
-def file_exists(file_id, content_type):
-    conn = get_db_connection()
-    table = "videos" if content_type == "video" else "photos"
-    exists = conn.execute(f"SELECT 1 FROM {table} WHERE file_id=?", (file_id,)).fetchone() is not None
-    conn.close()
-    return exists
+# --- БОТ ЛОГИКАСЫ ---
 
-# ================= START COMMAND =================
-@bot.message_handler(commands=['start'])
-def start_cmd(message):
+@dp.message(CommandStart())
+async def start(message: types.Message):
     user_id = message.from_user.id
-    text_parts = message.text.split()
-    ref_id = int(text_parts[1]) if len(text_parts) > 1 and text_parts[1].isdigit() else None
-    ensure_user(user_id, ref_id)
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("✅ 18-ден астым", callback_data="confirm_adult"))
-    bot.send_message(user_id, "🔞 Бұл ботта ересектерге арналған контент бар. Жасыңызды растаңыз:", reply_markup=markup)
+    args = message.text.split()
+    
+    cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+    is_new = cur.fetchone() is None
 
-# ================= CALLBACK =================
-@bot.callback_query_handler(func=lambda call: True)
-def callback_manager(call):
-    user_id = call.from_user.id
-    if call.data == "confirm_adult":
-        conn = get_db_connection()
-        with db_lock:
-            conn.execute("UPDATE users SET is_adult=1 WHERE user_id=?", (user_id,))
-            conn.commit()
-        conn.close()
-        bot.delete_message(user_id, call.message.message_id)
-        bot.send_message(user_id, "✅ Рақмет! Қалаған батырманы басыңыз.", reply_markup=get_main_keyboard(user_id))
+    if is_new:
+        ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+        cur.execute("INSERT INTO users (id, balance) VALUES (?, ?)", (user_id, 0))
+        if ref_id and ref_id != user_id:
+            cur.execute("UPDATE users SET balance = balance + 10, ref_count = ref_count + 1 WHERE id = ?", (ref_id,))
+            try:
+                await bot.send_message(ref_id, "🔔 Сүйінші! Досыңыз сіздің сілтемеңізбен кірді. Балансыңызға +10$ қосылды!")
+            except: pass
+        db.commit()
 
-# ================= VIP =================
-@bot.message_handler(func=lambda m: m.text == "💎 VIP алу")
-def vip_handler(message):
+    if not await check_sub(user_id):
+        kb = InlineKeyboardBuilder()
+        kb.add(InlineKeyboardButton(text="📢 Каналға тіркелу", url=CHANNEL_LINK))
+        return await message.answer(f"👋 Сәлем! Ботты қолдану үшін алдымен каналға жазылуыңыз керек. \n\nЖазылып болған соң қайтадан /start басыңыз.", reply_markup=kb.as_markup())
+
+    await message.answer("🚀 Қош келдіңіз! Ең эксклюзивті контенттер әлеміне енуге дайынсыз ба? Төмендегі мәзірден таңдау жасаңыз:", reply_markup=main_menu(user_id))
+
+@dp.message(F.text == "👤 Менің кабинетім")
+async def profile(message: types.Message):
+    cur.execute("SELECT balance, ref_count FROM users WHERE id = ?", (message.from_user.id,))
+    res = cur.fetchone()
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={message.from_user.id}"
+    await message.answer(f"👤 **Сіздің профиліңіз**\n\n💰 Баланс: {res[0]}$\n👫 Шақырылған достар: {res[1]}\n\n🔗 Сіздің реферал сілтемеңіз:\n`{ref_link}`\n\n🎁 Досыңызды шақырсаңыз, балансқа 10$ қосылады!")
+
+@dp.message(F.text.in_(["🎥 Видео көру", "🖼 Фото көру"]))
+async def view_content(message: types.Message):
+    if not await check_sub(message.from_user.id):
+        return await message.answer("❌ Каналға жазылмағансыз!")
+
+    c_type = "video" if "Видео" in message.text else "photo"
     user_id = message.from_user.id
-    conn = get_db_connection()
-    user_data = conn.execute("SELECT is_vip FROM users WHERE user_id=?", (user_id,)).fetchone()
-    if user_data and user_data[0] == 1:
-        bot.send_message(user_id, "💎 Сізде VIP режим бар!")
-    else:
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📨 VIP сұрау жіберу", url=f"https://t.me/{VIP_CONTACT}?start=VIP_{user_id}"))
-        bot.send_message(user_id,
-                         f"💎 VIP режимді алу үшін @{VIP_CONTACT}-қа хабарласыңыз.\n"
-                         f"Барлық видеолар мен фотолар тегін қол жетімді болады.", reply_markup=markup)
-    conn.close()
+    
+    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    balance = cur.fetchone()[0]
 
-# ================= DAILY BONUS =================
-@bot.message_handler(func=lambda m: m.text == "🎁 Күндік бонус алу")
-def daily_bonus_handler(message):
-    user_id = message.from_user.id
-    conn = get_db_connection()
-    user_data = conn.execute("SELECT last_daily, balance FROM users WHERE user_id=?", (user_id,)).fetchone()
-    now = datetime.now()
-    if user_data and user_data[0]:
-        next_time = datetime.fromisoformat(user_data[0]) + timedelta(hours=24)
-        if now < next_time:
-            diff = next_time - now
-            bot.send_message(user_id, f"⚠️ Бонусты тек 24 сағатта бір рет алуға болады.\nКүте тұрыңыз: {int(diff.total_seconds() // 3600)} сағат.")
-            conn.close()
-            return
-    with db_lock:
-        new_balance = user_data[1] + 10 if user_data else 10
-        conn.execute("UPDATE users SET balance=?, last_daily=? WHERE user_id=?", (new_balance, now.isoformat(), user_id))
-        conn.commit()
-    bot.send_message(user_id, "🎉 +10💸 бонус берілді!")
-    conn.close()
+    if balance < 5:
+        return await message.answer("💸 Балансыңыз жеткіліксіз. 1 көру құны - 5$.\n\nДостарыңызды шақырып, балансты толтырыңыз!")
 
-# ================= VIEW VIDEO / PHOTO =================
-@bot.message_handler(func=lambda m: m.text in ["🎥 Видео көру", "🖼 Фото көру"])
-def view_content_handler(message):
-    user_id = message.from_user.id
-    conn = get_db_connection()
-    user_data = conn.execute(
-        "SELECT is_adult, balance, progress_video, progress_photo, is_vip FROM users WHERE user_id=?",
-        (user_id,)
-    ).fetchone()
-    if not user_data or user_data[0] == 0:
-        conn.close()
-        return
+    # Көрмеген контентті алу
+    cur.execute("SELECT file_id FROM content WHERE type = ? AND file_id NOT IN (SELECT file_id FROM history WHERE user_id = ?)", (c_type, user_id))
+    items = cur.fetchall()
 
-    is_vip = user_data[4]
-    balance = user_data[1]
+    if not items:
+        return await message.answer("😔 Әзірге сіз көрмеген жаңа контент жоқ. Сәл күте тұрыңыз!")
 
-    if balance <= 0 and not is_vip:
-        bot.send_message(user_id, get_ref_msg(user_id))
-        conn.close()
-        return
+    f_id = random.choice(items)[0]
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
+    caption = f"🎬 Рахаттанып тамашалаңыз!\n\n💸 Көру құны: 5$\n🔗 Достарыңды шақыр: {ref_link}"
 
-    if message.text == "🎥 Видео көру":
-        if not check_subscription(user_id):
-            bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
-            conn.close()
-            return
-        total_videos = conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
-        if total_videos == 0:
-            bot.send_message(user_id, "😔 Видеолар әлі жоқ.")
-            conn.close()
-            return
-        offset = user_data[2] % total_videos
-        vid = conn.execute("SELECT file_id FROM videos ORDER BY id ASC LIMIT 1 OFFSET ?", (offset,)).fetchone()
-        new_balance = balance if is_vip else balance - 2
-        bot.send_video(user_id, vid[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
-        with db_lock:
-            conn.execute("UPDATE users SET balance=?, progress_video=progress_video+1 WHERE user_id=?", (new_balance, user_id))
-            conn.commit()
-
-    elif message.text == "🖼 Фото көру":
-        if not check_subscription(user_id):
-            bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
-            conn.close()
-            return
-        total_photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
-        if total_photos == 0:
-            bot.send_message(user_id, "😔 Фотолар әлі жоқ.")
-            conn.close()
-            return
-        offset = user_data[3] % total_photos
-        pic = conn.execute("SELECT file_id FROM photos ORDER BY id ASC LIMIT 1 OFFSET ?", (offset,)).fetchone()
-        new_balance = balance if is_vip else balance - 3
-        bot.send_photo(user_id, pic[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
-        with db_lock:
-            conn.execute("UPDATE users SET balance=?, progress_photo=progress_photo+1 WHERE user_id=?", (new_balance, user_id))
-            conn.commit()
-
-    conn.close()
-
-# ================= ADMIN ADD CONTENT (MULTIPLE) =================
-@bot.message_handler(func=lambda m: m.text in ["➕ Видео қосу", "➕ Фото қосу"] and m.from_user.id == ADMIN_ID)
-def admin_add_content(message):
-    user_id = message.from_user.id
-    bot.send_message(user_id, "📤 Файлдарды бірден жіберуге болады (видео/фото):")
-    bot.register_next_step_handler(message, handle_admin_upload)
-
-def handle_admin_upload(message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID:
-        return
-
-    conn = get_db_connection()
-
-    # MEDIA GROUP
-    media_files = []
-    if message.content_type == "video":
-        media_files.append(("video", message.video.file_id))
-    elif message.content_type == "photo":
-        media_files.append(("photo", message.photo[-1].file_id))
-    elif hasattr(message, "media_group_id") and message.media_group_id:
-        for m in message.media_group_id:
-            if m.content_type == "video":
-                media_files.append(("video", m.video.file_id))
-            elif m.content_type == "photo":
-                media_files.append(("photo", m.photo[-1].file_id))
-
-    for content_type, file_id in media_files:
-        if not file_exists(file_id, content_type):
-            with db_lock:
-                table = "videos" if content_type == "video" else "photos"
-                conn.execute(f"INSERT INTO {table} (file_id, added_at) VALUES (?, ?)", (file_id, datetime.now().isoformat()))
-                conn.commit()
-            bot.send_message(user_id, f"✅ {content_type.title()} қосылды!")
+    try:
+        if c_type == "video":
+            await message.answer_video(f_id, caption=caption)
         else:
-            bot.send_message(user_id, f"⚠️ {content_type.title()} бұрын қосылған!")
+            await message.answer_photo(f_id, caption=caption)
+        
+        cur.execute("UPDATE users SET balance = balance - 5 WHERE id = ?", (user_id,))
+        cur.execute("INSERT INTO history VALUES (?, ?)", (user_id, f_id))
+        db.commit()
+    except Exception as e:
+        await message.answer("⚠️ Қате орын алды, қайта көріңіз.")
 
-    conn.close()
+@dp.message(F.text == "💎 Канал сатып алу")
+async def buy_channel(message: types.Message):
+    kb = InlineKeyboardBuilder()
+    kb.add(InlineKeyboardButton(text="👨‍💻 Менеджерге жазу", url=f"https://t.me/{MANAGER_USERNAME}"))
+    await message.answer("👑 Каналды толықтай иеленгіңіз келе ме?\n\nБарлық құқықтарды сатып алу және толық ақпарат алу үшін менеджерге жазыңыз:", reply_markup=kb.as_markup())
 
-# ================= ADMIN STATS / BROADCAST =================
-@bot.message_handler(func=lambda m: m.text in ["📊 Статистика", "📢 Рассылка"] and m.from_user.id == ADMIN_ID)
-def admin_tools(message):
-    if message.text == "📊 Статистика":
-        conn = get_db_connection()
-        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        total_videos = conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0]
-        total_photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
-        conn.close()
-        bot.send_message(ADMIN_ID, f"👥 Пайдаланушылар: {total_users}\n🎥 Видеолар: {total_videos}\n🖼 Фотолар: {total_photos}")
-    elif message.text == "📢 Рассылка":
-        bot.send_message(ADMIN_ID, "✉️ Хабарламаны жазыңыз:")
-        bot.register_next_step_handler(message, process_broadcast)
+# --- АДМИН ПАНЕЛЬ ---
 
-def process_broadcast(message):
-    text = message.text
-    conn = get_db_connection()
-    users = conn.execute("SELECT user_id FROM users").fetchall()
-    conn.close()
-    for u in users:
-        try:
-            bot.send_message(u[0], f"📢 Админ хабарламасы:\n{text}")
-        except: pass
-    bot.send_message(ADMIN_ID, f"✅ Хабарлама {len(users)} адамға жіберілді.")
+@dp.message(F.text == "⚙️ Админ Панель", F.from_user.id == ADMIN_ID)
+async def admin_main(message: types.Message):
+    kb = ReplyKeyboardBuilder()
+    kb.row(KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📢 Рассылка"))
+    kb.row(KeyboardButton(text="👁 Жасырын көру"), KeyboardButton(text="🔙 Артқа"))
+    await message.answer("🛠 Админ басқару панелі:", reply_markup=kb.as_markup(resize_keyboard=True))
 
-# ================= RUN BOT =================
-logger.info("Bot is polling...")
-bot.infinity_polling()
+@dp.message(F.text == "📊 Статистика", F.from_user.id == ADMIN_ID)
+async def stats(message: types.Message):
+    cur.execute("SELECT COUNT(*) FROM users")
+    u = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM content WHERE type='video'")
+    v = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM content WHERE type='photo'")
+    p = cur.fetchone()[0]
+    await message.answer(f"📈 **Жалпы статистика:**\n\n👥 Қолданушылар саны: {u}\n🎥 Видеолар: {v}\n🖼 Фотолар: {p}")
+
+@dp.message(F.from_user.id == ADMIN_ID, (F.video | F.photo))
+async def bulk_upload(message: types.Message):
+    if message.video:
+        cur.execute("INSERT OR IGNORE INTO content VALUES (?, ?)", (message.video.file_id, "video"))
+    elif message.photo:
+        cur.execute("INSERT OR IGNORE INTO content VALUES (?, ?)", (message.photo[-1].file_id, "photo"))
+    db.commit()
+    await message.answer("✅ Контент сәтті сақталды!")
+
+@dp.message(F.text == "🔙 Артқа")
+async def back(message: types.Message):
+    await message.answer("Бас мәзірге қайттыңыз.", reply_markup=main_menu(message.from_user.id))
+
+# --- БОТТЫ ІСКЕ ҚОСУ ---
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
