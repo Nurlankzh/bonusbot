@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # ===== CONFIG =====
-TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
+TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"  # <- өзіңнің бот токеніңді қоясың
 ADMIN_ID = 6303091468
 REF_LINK = "https://t.me/Darvinuyatszdaribot?start=6303091468"
 
@@ -56,13 +56,12 @@ async def db_query(sql, params=(), fetch=None):
 def main_kb(user_id):
     kb = ReplyKeyboardBuilder()
     kb.row(KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото"))
-    kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Бонус беру"))
-    kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
-
+    kb.row(KeyboardButton(text="⭐ Бонус"))
     if user_id == ADMIN_ID:
+        kb.row(KeyboardButton(text="📤 Бонус беру"))  # Тек админге
         kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
         kb.row(KeyboardButton(text="📢 Рассылка"))
-
+    kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
     return kb.as_markup(resize_keyboard=True)
 
 # ===== START =====
@@ -71,7 +70,6 @@ async def start(msg: Message):
     user = await db_query("SELECT 1 FROM users WHERE user_id=?", (msg.from_user.id,), "one")
     if not user:
         await db_query("INSERT INTO users (user_id) VALUES (?)", (msg.from_user.id,))
-    
     await msg.answer(
         "🔥 Қош келдің!\n\n"
         "🎥 Видео көр\n"
@@ -272,6 +270,9 @@ async def give_bonus_step(msg: Message):
             user_id = int(msg.text)
         except ValueError:
             return await msg.answer("❌ ID дұрыс емес, тек сандармен жазыңыз.")
+        user = await db_query("SELECT 1 FROM users WHERE user_id=?", (user_id,), "one")
+        if not user:
+            return await msg.answer("❌ Бұл қолданушы базаға тіркелмеген!")
         state["user_id"] = user_id
         state["step"] = "amount"
         return await msg.answer(f"💰 {user_id} қолданушыға қанша бонус қосамыз?")
