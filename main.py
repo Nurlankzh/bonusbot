@@ -14,7 +14,8 @@ BOT_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@uyatsizoqiga"
 DB_FILE = "data.db"
-REF_BOT_USERNAME = "Darvinuyatszdaribot"  # @ белгісін қоспай жазамыз
+REF_BOT_USERNAME = "Darvinuyatszdaribot"
+VIP_CONTACT = "Kazhabs"  # VIP алу үшін контакті
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,7 +42,8 @@ def init_db():
             referral_count INTEGER DEFAULT 0,
             is_adult INTEGER DEFAULT 0,
             joined_at TEXT,
-            last_daily TEXT
+            last_daily TEXT,
+            is_vip INTEGER DEFAULT 0
         )""")
         cursor.execute("""CREATE TABLE IF NOT EXISTS pending (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,9 +70,10 @@ def get_main_keyboard(user_id):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row(KeyboardButton("🎥 Видео көру"), KeyboardButton("🖼 Фото көру"))
     kb.row(KeyboardButton("🎁 Күндік бонус алу"), KeyboardButton("➕ Видео/Фото жіберу"))
+    kb.row(KeyboardButton("💎 VIP алу"))
     if user_id == ADMIN_ID:
         kb.row(KeyboardButton("💰 Бонус беру"), KeyboardButton("✅ Pending файлдар"))
-        kb.row(KeyboardButton("📊 Статистика"))
+        kb.row(KeyboardButton("📊 Статистика"), KeyboardButton("📢 Рассылка"))
     return kb
 
 # ==========================================
@@ -86,7 +89,6 @@ def ensure_user(user_id, invited_by=None):
             cursor.execute("INSERT INTO users (user_id, balance, invited_by, joined_at) VALUES (?, ?, ?, ?)",
                            (user_id, 3, invited_by, now))
             conn.commit()
-            # Реферальдық бонус
             if invited_by and invited_by != user_id:
                 cursor.execute("UPDATE users SET balance = balance + 6, referral_count = referral_count + 1 WHERE user_id=?", (invited_by,))
                 conn.commit()
@@ -144,34 +146,29 @@ def callback_manager(call):
             conn.commit()
         bot.delete_message(user_id, call.message.message_id)
         bot.send_message(user_id, "✅ Рақмет! Қалаған батырманы басыңыз.", reply_markup=get_main_keyboard(user_id))
-    
-    elif call.data.startswith("appr_") or call.data.startswith("reject_"):
-        pid = int(call.data.split("_")[1])
-        p = conn.execute("SELECT uploader_id, content_type, file_id FROM pending WHERE id=?", (pid,)).fetchone()
-        if p:
-            uid, ctype, fid = p
-            if call.data.startswith("appr_"):
-                if file_exists(fid, ctype):
-                    bot.send_message(ADMIN_ID, f"⚠️ Бұл {ctype} ботта бұрын бар. Қосылмады.")
-                    bot.send_message(uid, f"⚠️ Сіздің {ctype} файлыңыз ботта бұрын бар, қосылмады.")
-                    with db_lock:
-                        conn.execute("DELETE FROM pending WHERE id=?", (pid,))
-                        conn.commit()
-                else:
-                    table = "videos" if ctype == "video" else "photos"
-                    with db_lock:
-                        conn.execute(f"INSERT INTO {table} (file_id, added_by, created_at) VALUES (?,?,?)", (fid, uid, datetime.now().isoformat()))
-                        conn.execute("UPDATE users SET balance = balance + 12 WHERE user_id=?", (uid,))
-                        conn.execute("DELETE FROM pending WHERE id=?", (pid,))
-                        conn.commit()
-                    bot.send_message(uid, "✅ Файлыңыз қабылданды! +12💸 бонус берілді.")
-                    bot.edit_message_caption("✅ Мақұлданды", ADMIN_ID, call.message.message_id)
-            elif call.data.startswith("reject_"):
-                with db_lock:
-                    conn.execute("DELETE FROM pending WHERE id=?", (pid,))
-                    conn.commit()
-                bot.send_message(uid, "❌ Файлыңыз қабылданбады.")
-                bot.edit_message_caption("❌ Реджекттелді", ADMIN_ID, call.message.message_id)
+    conn.close()
+
+# ==========================================
+# VIP HANDLER
+# ==========================================
+@bot.message_handler(func=lambda m: m.text == "💎 VIP алу")
+def vip_handler(message):
+    user_id = message.from_user.id
+    conn = get_db_connection()
+    user_data = conn.execute("SELECT is_vip FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if user_data and user_data[0] == 1:
+        bot.send_message(user_id, "💎 Сізде VIP режим бар!")
+    else:
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📨 VIP сұрау жіберу", url=f"https://t.me/{VIP_CONTACT}?start=VIP_{user_id}"))
+        bot.send_message(user_id,
+                         f"💎 VIP режимді алу үшін келесі қадамдарды орындаңыз:\n\n"
+                         f"1️⃣ @{VIP_CONTACT}-қа хабарласыңыз.\n"
+                         f"2️⃣ «VIP режим алғым келеді» деп жазуға дайын текст шығады.\n"
+                         f"3️⃣ VIP бекітілген соң барлық видеолар мен фотолар тегін қол жетімді болады.\n"
+                         f"4️⃣ VIP қолданушыларға қосымша бонус беріледі.\n\n"
+                         f"🚀 Тез әрекет жасаңыз, эксклюзив бонус үшін!",
+                         reply_markup=markup)
     conn.close()
 
 # ==========================================
@@ -226,14 +223,35 @@ def handle_uploads(message):
     conn.close()
 
 # ==========================================
-# TEXT HANDLER (VIDEO/PHOTO VIEW & ADMIN)
+# BROADCAST HANDLER
+# ==========================================
+@bot.message_handler(func=lambda m: m.text == "📢 Рассылка" and m.from_user.id == ADMIN_ID)
+def broadcast_handler(message):
+    bot.send_message(ADMIN_ID, "✉️ Жіберетін хабарламаны жазыңыз:")
+    bot.register_next_step_handler(message, process_broadcast)
+
+def process_broadcast(message):
+    text = message.text
+    conn = get_db_connection()
+    users = conn.execute("SELECT user_id FROM users").fetchall()
+    conn.close()
+    sent = 0
+    for u in users:
+        try:
+            bot.send_message(u[0], f"📢 Админ хабарламасы:\n\n{text}")
+            sent += 1
+        except: pass
+    bot.send_message(ADMIN_ID, f"✅ Хабарлама {sent} адамға жіберілді.")
+
+# ==========================================
+# TEXT HANDLER (VIEW VIDEO/PHOTO, ADMIN)
 # ==========================================
 @bot.message_handler(func=lambda m: True)
 def text_handler(message):
     user_id = message.from_user.id
     text = message.text
     conn = get_db_connection()
-    user_data = conn.execute("SELECT is_adult, balance, progress_video, progress_photo FROM users WHERE user_id=?", (user_id,)).fetchone()
+    user_data = conn.execute("SELECT is_adult, balance, progress_video, progress_photo, is_vip FROM users WHERE user_id=?", (user_id,)).fetchone()
     
     if not user_data or user_data[0] == 0:
         conn.close()
@@ -243,12 +261,12 @@ def text_handler(message):
     if text == "🎥 Видео көру":
         if not check_subscription(user_id):
             bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
-        elif user_data[1] < 2:
+        elif not user_data[4] and user_data[1] < 2:  # VIP болса тегін
             bot.send_message(user_id, get_ref_msg(user_id), parse_mode="Markdown")
         else:
             vid = conn.execute("SELECT file_id FROM videos ORDER BY id ASC LIMIT 1 OFFSET ?", (user_data[2],)).fetchone()
             if vid:
-                new_balance = user_data[1] - 2
+                new_balance = user_data[1] - 2 if not user_data[4] else user_data[1]
                 bot.send_video(user_id, vid[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
                 with db_lock:
                     conn.execute("UPDATE users SET balance = ?, progress_video = progress_video + 1 WHERE user_id=?", (new_balance, user_id))
@@ -259,12 +277,12 @@ def text_handler(message):
     elif text == "🖼 Фото көру":
         if not check_subscription(user_id):
             bot.send_message(user_id, f"⚠️ Каналға тіркеліңіз: {CHANNEL_USERNAME}")
-        elif user_data[1] < 3:
+        elif not user_data[4] and user_data[1] < 3:
             bot.send_message(user_id, get_ref_msg(user_id), parse_mode="Markdown")
         else:
             pic = conn.execute("SELECT file_id FROM photos ORDER BY id ASC LIMIT 1 OFFSET ?", (user_data[3],)).fetchone()
             if pic:
-                new_balance = user_data[1] - 3
+                new_balance = user_data[1] - 3 if not user_data[4] else user_data[1]
                 bot.send_photo(user_id, pic[0], caption=f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}💸")
                 with db_lock:
                     conn.execute("UPDATE users SET balance = ?, progress_photo = progress_photo + 1 WHERE user_id=?", (new_balance, user_id))
