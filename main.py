@@ -60,6 +60,44 @@ def main_kb(user_id):
     kb.row(KeyboardButton(text="💎 VIP"))
     if user_id == ADMIN_ID:
         kb.row(KeyboardButton(text="📤 Бонус беру"))
+        # ===== ADMIN GIVE BONUS INTERACTIVE =====
+bonus_state = {}  # админның уақытша күйі
+
+@dp.message(F.text == "📤 Бонус беру", F.from_user.id == ADMIN_ID)
+async def bonus_hint(msg: Message):
+    bonus_state[msg.from_user.id] = {"step": 1}  # қадам 1: ID күту
+    await msg.answer(
+        "📝 Бонус беру үшін чатқа былай жазыңыз:\n\n"
+        "1️⃣ Пайдаланушы ID енгізіңіз\n"
+        "2️⃣ Бонус сомасын енгізіңіз\n\n"
+        "Мысалы:\n6303091468\n100"
+    )
+
+@dp.message(F.from_user.id == ADMIN_ID)
+async def bonus_process(msg: Message):
+    state = bonus_state.get(msg.from_user.id)
+    if not state:
+        return  # басқа хабарламаларға қарамаймыз
+
+    if state["step"] == 1:
+        try:
+            user_id = int(msg.text.strip())
+            state["user_id"] = user_id
+            state["step"] = 2
+            await msg.answer(f"✅ ID қабылданды: {user_id}\nЕнді бонус сомасын енгізіңіз:")
+        except ValueError:
+            await msg.answer("❌ ID дұрыс емес, тек сандармен жазу керек. Қайта енгізіңіз:")
+    elif state["step"] == 2:
+        try:
+            amount = int(msg.text.strip())
+            user_id = state["user_id"]
+            # Базада бонус қосу
+            await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (amount, user_id))
+            await msg.answer(f"🎉 {amount} бонус {user_id}-ға сәтті қосылды!")
+            # Күйді тазалау
+            bonus_state.pop(msg.from_user.id, None)
+        except ValueError:
+            await msg.answer("❌ Сома дұрыс емес, тек сандармен жазу керек. Қайта енгізіңіз:")
         kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
         kb.row(KeyboardButton(text="📢 Рассылка"))
     return kb.as_markup(resize_keyboard=True)
