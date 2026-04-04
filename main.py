@@ -56,9 +56,12 @@ async def db_query(sql, params=(), fetch=None):
 def main_kb(user_id):
     kb = ReplyKeyboardBuilder()
     kb.row(KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото"))
-    kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Бонус беру"))
-    kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
+    kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="🎁 Күндік бонус"))
+    kb.row(KeyboardButton(text="💎 VIP"))
+    
+    # ТЕК АДМИНГЕ КӨРІНЕТІН БАТЫРМАЛАР
     if user_id == ADMIN_ID:
+        kb.row(KeyboardButton(text="📤 Бонус беру"))
         kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
         kb.row(KeyboardButton(text="📢 Рассылка"))
     return kb.as_markup(resize_keyboard=True)
@@ -74,7 +77,40 @@ async def start(msg: Message):
         reply_markup=main_kb(msg.from_user.id)
     )
 
-# ===== BONUS =====
+# ===== ADMIN: GIVE BONUS BY COMMAND =====
+# Формат: бонус 123456789 100
+@dp.message(F.text.lower().startswith("бонус"), F.from_user.id == ADMIN_ID)
+async def process_give_bonus(msg: Message):
+    try:
+        parts = msg.text.split()
+        if len(parts) != 3:
+            return await msg.answer("❌ Қате формат!\nМысалы: `бонус 6303091468 50`", parse_mode="Markdown")
+        
+        target_id = int(parts[1])
+        amount = int(parts[2])
+        
+        # Пайдаланушы базада бар ма тексереміз
+        user = await db_query("SELECT 1 FROM users WHERE user_id=?", (target_id,), "one")
+        if not user:
+            return await msg.answer("❌ Бұл пайдаланушы базада жоқ!")
+
+        await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (amount, target_id))
+        
+        # Пайдаланушыға хабарлама жіберу
+        try:
+            await bot.send_message(target_id, f"🎁 Құттықтаймыз! Админ сізге {amount} бонус берді!")
+        except:
+            pass
+            
+        await msg.answer(f"✅ ID: {target_id} пайдаланушысына {amount} бонус сәтті қосылды!")
+    except ValueError:
+        await msg.answer("❌ Қате! ID және бонус саны тек сандар болуы керек.")
+
+@dp.message(F.text == "📤 Бонус беру", F.from_user.id == ADMIN_ID)
+async def give_bonus_hint(msg: Message):
+    await msg.answer("📝 Бонус беру үшін чатқа былай жазыңыз:\n\n`бонус ID СОМА` \n\nМысалы: `бонус 6303091468 100`", parse_mode="Markdown")
+
+# ===== BONUS INFO =====
 @dp.message(F.text == "⭐ Бонус")
 async def bonus(msg: Message):
     u = await db_query("SELECT bonus, is_vip FROM users WHERE user_id=?", (msg.from_user.id,), "one")
@@ -91,10 +127,10 @@ async def daily(msg: Message):
     if u[0] == today:
         return await msg.answer("⏳ Бүгін алдың!")
     streak = (u[1] or 0) + 1
-    bonus = 5 + (streak // 3) * 2
+    bonus_val = 5 + (streak // 3) * 2
     await db_query("UPDATE users SET bonus=bonus+?, last_bonus_date=?, streak=? WHERE user_id=?",
-                   (bonus, today, streak, msg.from_user.id))
-    await msg.answer(f"🎁 +{bonus} бонус\n🔥 Серия: {streak}")
+                   (bonus_val, today, streak, msg.from_user.id))
+    await msg.answer(f"🎁 +{bonus_val} бонус\n🔥 Серия: {streak}")
 
 # ===== VIP =====
 @dp.message(F.text == "💎 VIP")
@@ -127,7 +163,7 @@ async def media(msg: Message):
     is_vip = u[4]
     if not is_vip and u[1] < cost:
         return await msg.answer(
-            "❌ Бонусың бітіп қалды!\n\n👥 Дос шақыр:\n{REF_LINK}\n\n🔥 Әр адам = +10 бонус"
+            f"❌ Бонусың бітіп қалды!\n\n👥 Дос шақыр:\n{REF_LINK}\n\n🔥 Әр адам = +10 бонус"
         )
     last_id = u[2] if is_video else u[3]
     media_item = await db_query(f"SELECT id, file_id FROM {table} WHERE id>? ORDER BY id LIMIT 1", (last_id,), "one")
@@ -145,7 +181,7 @@ async def media(msg: Message):
     if not is_vip:
         await db_query("UPDATE users SET bonus=bonus-? WHERE user_id=?", (cost, msg.from_user.id))
 
-# ===== UPLOAD =====
+# ===== UPLOAD & ADMIN TOOLS =====
 @dp.message(F.video | F.photo)
 async def upload(msg: Message):
     f_type = "video" if msg.video else "photo"
@@ -153,109 +189,73 @@ async def upload(msg: Message):
     if msg.from_user.id == ADMIN_ID:
         table = "videos" if f_type == "video" else "photos"
         await db_query(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
-        await msg.answer(f"✅ {f_type.capitalize()} базаға қосылды! Шексіз қолжетімді.")
+        await msg.answer(f"✅ {f_type.capitalize()} базаға қосылды!")
         return
-    await db_query("INSERT INTO pending (user_id, file_id, file_type) VALUES (?, ?, ?)",
-                   (msg.from_user.id, f_id, f_type))
+    await db_query("INSERT INTO pending (user_id, file_id, file_type) VALUES (?, ?, ?)", (msg.from_user.id, f_id, f_type))
     await msg.answer("⏳ Админ тексеруде...")
 
-# ===== PENDING LOOP =====
 @dp.message(F.text == "⏳ Pending", F.from_user.id == ADMIN_ID)
 async def pending(msg: Message):
     item = await db_query("SELECT * FROM pending ORDER BY id LIMIT 1", fetch="one")
-    if not item:
-        return await msg.answer("📂 Бос")
+    if not item: return await msg.answer("📂 Бос")
     _, u_id, f_id, f_type = item
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Мақұлдау", callback_data=f"ok_{item[0]}"),
          InlineKeyboardButton(text="❌ Болдырмау", callback_data=f"no_{item[0]}")]
     ])
-    if f_type == "video":
-        await msg.answer_video(f_id, caption=f"👤 {u_id}", reply_markup=kb)
-    else:
-        await msg.answer_photo(f_id, caption=f"👤 {u_id}", reply_markup=kb)
+    if f_type == "video": await msg.answer_video(f_id, caption=f"👤 {u_id}", reply_markup=kb)
+    else: await msg.answer_photo(f_id, caption=f"👤 {u_id}", reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("ok_"))
 async def ok(call: CallbackQuery):
     db_id = call.data.split("_")[1]
     data = await db_query("SELECT * FROM pending WHERE id=?", (db_id,), "one")
-    u_id, f_id, f_type = data[1], data[2], data[3]
-    table = "videos" if f_type == "video" else "photos"
-    await db_query(f"INSERT INTO {table} (file_id) VALUES (?)", (f_id,))
-    bonus = 12 if f_type == "video" else 6
-    await db_query("UPDATE users SET bonus=bonus+? WHERE user_id=?", (bonus, u_id))
-    await db_query("DELETE FROM pending WHERE id=?", (db_id,))
-    try:
-        await bot.send_message(u_id, f"✅ Қабылданды! +{bonus} бонус")
-    except:
-        pass
+    if data:
+        u_id, f_id, f_type = data[1], data[2], data[3]
+        table = "videos" if f_type == "video" else "photos"
+        await db_query(f"INSERT INTO {table} (file_id) VALUES (?)", (f_id,))
+        bonus = 12 if f_type == "video" else 6
+        await db_query("UPDATE users SET bonus=bonus+? WHERE user_id=?", (bonus, u_id))
+        await db_query("DELETE FROM pending WHERE id=?", (db_id,))
+        try: await bot.send_message(u_id, f"✅ Қабылданды! +{bonus} бонус")
+        except: pass
     await call.message.delete()
-    await pending(call.message)
 
 @dp.callback_query(F.data.startswith("no_"))
 async def no(call: CallbackQuery):
     db_id = call.data.split("_")[1]
     await db_query("DELETE FROM pending WHERE id=?", (db_id,))
     await call.message.delete()
-    await pending(call.message)
 
-# ===== ADMIN STATISTICS =====
 @dp.message(F.text == "📊 Статистика", F.from_user.id == ADMIN_ID)
 async def stats(msg: Message):
-    total_users = await db_query("SELECT COUNT(*) FROM users", fetch="one")
-    active_users = await db_query("SELECT COUNT(*) FROM users WHERE bonus>0 OR is_vip=1", fetch="one")
-    pending_count = await db_query("SELECT COUNT(*) FROM pending", fetch="one")
-    await msg.answer(
-        f"📊 Статистика\n\n👥 Барлығы: {total_users[0]}\n🔥 Активті: {active_users[0]}\n⏳ Pending: {pending_count[0]}"
-    )
+    total = await db_query("SELECT COUNT(*) FROM users", fetch="one")
+    await msg.answer(f"📊 Пайдаланушылар саны: {total[0]}")
 
-# ===== BROADCAST =====
 broadcast_state = {}
-
 @dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
-async def broadcast_start(msg: Message):
+async def bc_start(msg: Message):
     broadcast_state[msg.from_user.id] = True
-    await msg.answer("📢 Таратқыңыз келетін хабарламаны жіберіңіз:")
+    await msg.answer("📢 Хабарлама жіберіңіз:")
 
 @dp.message(F.from_user.id == ADMIN_ID)
-async def broadcast_send(msg: Message):
+async def bc_send(msg: Message):
     if broadcast_state.get(msg.from_user.id):
-        text = msg.text
         users = await db_query("SELECT user_id FROM users", fetch="all")
-        sent = 0
         for u in users:
-            try:
-                await bot.send_message(u[0], text)
-                sent += 1
-                await asyncio.sleep(0.05)
-            except:
-                pass
-        await msg.answer(f"📢 Жарияланды: {sent}/{len(users)}")
+            try: await bot.send_message(u[0], msg.text); await asyncio.sleep(0.05)
+            except: pass
         broadcast_state[msg.from_user.id] = False
-
-# ===== ADMIN GIVE BONUS (бір жолда) =====
-@dp.message(F.text.startswith("📤 Бонус беру"), F.from_user.id == ADMIN_ID)
-async def give_bonus(msg: Message):
-    try:
-        parts = msg.text.split()
-        if len(parts) != 4:  # 📤 Бонус беру <user_id> <amount>
-            return await msg.answer("❌ Қате формат! Мысалы: 📤 Бонус беру 8282635086 10")
-        user_id = int(parts[2])
-        bonus = int(parts[3])
-        await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, user_id))
-        await msg.answer(f"✅ {bonus} бонус {user_id}-ға қосылды!")
-    except ValueError:
-        await msg.answer("❌ ID және бонус сандары дұрыс емес, тек сандармен жазу керек.")
-    except Exception as e:
-        await msg.answer(f"❌ Қате шықты: {e}")
+        await msg.answer("✅ Жіберілді!")
 
 # ===== UNKNOWN MESSAGE =====
 @dp.message()
 async def unknown(msg: Message):
-    known_commands = ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "📤 Бонус беру", "🎁 Күндік бонус",
-                      "💎 VIP", "⏳ Pending", "📊 Статистика", "📢 Рассылка", "/start"]
-    if not any(msg.text.startswith(k) for k in known_commands):
-        await msg.answer("❌ Түсінбедім 🤔\nМенюдағы батырмаларды таңдаңыз немесе /start теріңіз.")
+    known = ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "🎁 Күндік бонус", "💎 VIP"]
+    if msg.from_user.id == ADMIN_ID:
+        known.extend(["⏳ Pending", "📊 Статистика", "📢 Рассылка", "📤 Бонус беру"])
+    if not any(msg.text == k for k in known) and not msg.text.startswith("/"):
+        await msg.answer("❌ Түсінбедім 🤔")
 
 # ===== RUN =====
 async def main():
