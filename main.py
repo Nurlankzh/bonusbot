@@ -14,7 +14,7 @@ BOT_TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
 ADMIN_ID = 6303091468
 CHANNEL_USERNAME = "@uyatsizoqiga"
 DB_FILE = "data.db"
-REF_BOT_USERNAME = "adeptiemesbot"
+REF_BOT_USERNAME = "Darvinuyatszdaribot"  # @ белгісін қоспай жазамыз
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -86,6 +86,7 @@ def ensure_user(user_id, invited_by=None):
             cursor.execute("INSERT INTO users (user_id, balance, invited_by, joined_at) VALUES (?, ?, ?, ?)",
                            (user_id, 3, invited_by, now))
             conn.commit()
+            # Реферальдық бонус
             if invited_by and invited_by != user_id:
                 cursor.execute("UPDATE users SET balance = balance + 6, referral_count = referral_count + 1 WHERE user_id=?", (invited_by,))
                 conn.commit()
@@ -116,7 +117,7 @@ def file_exists(file_id, content_type):
     return exists
 
 # ==========================================
-# HANDLERS
+# START COMMAND
 # ==========================================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -130,6 +131,9 @@ def start_cmd(message):
     markup.add(InlineKeyboardButton("✅ 18-ден астым", callback_data="confirm_adult"))
     bot.send_message(user_id, "🔞 Бұл ботта ересектерге арналған контент бар. Жасыңызды растаңыз:", reply_markup=markup)
 
+# ==========================================
+# CALLBACK HANDLER
+# ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_manager(call):
     user_id = call.from_user.id
@@ -170,6 +174,9 @@ def callback_manager(call):
                 bot.edit_message_caption("❌ Реджекттелді", ADMIN_ID, call.message.message_id)
     conn.close()
 
+# ==========================================
+# DAILY BONUS
+# ==========================================
 @bot.message_handler(func=lambda m: m.text == "🎁 Күндік бонус алу")
 def daily_bonus_handler(message):
     user_id = message.from_user.id
@@ -190,7 +197,7 @@ def daily_bonus_handler(message):
     conn.close()
 
 # ==========================================
-# UPLOADS (VIDEO/PHOTO)
+# UPLOAD HANDLER
 # ==========================================
 @bot.message_handler(content_types=['photo', 'video'])
 def handle_uploads(message):
@@ -219,7 +226,7 @@ def handle_uploads(message):
     conn.close()
 
 # ==========================================
-# TEXT HANDLER
+# TEXT HANDLER (VIDEO/PHOTO VIEW & ADMIN)
 # ==========================================
 @bot.message_handler(func=lambda m: True)
 def text_handler(message):
