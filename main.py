@@ -58,8 +58,17 @@ def main_kb(user_id):
     kb.row(KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото"))
     kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Жіберу"))
     kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
+
     if user_id == ADMIN_ID:
-        kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
+        kb.row(
+            KeyboardButton(text="⏳ Pending"),
+            KeyboardButton(text="📊 Статистика")
+        )
+        kb.row(
+            KeyboardButton(text="📢 Рассылка"),
+            KeyboardButton(text="📤 Бонус беру")
+        )
+
     return kb.as_markup(resize_keyboard=True)
 
 # ===== START =====
@@ -68,6 +77,7 @@ async def start(msg: Message):
     user = await db_query("SELECT 1 FROM users WHERE user_id=?", (msg.from_user.id,), "one")
     if not user:
         await db_query("INSERT INTO users (user_id) VALUES (?)", (msg.from_user.id,))
+    
     await msg.answer(
         "🔥 Қош келдің!\n\n"
         "🎥 Видео көр\n"
@@ -226,14 +236,16 @@ async def stats(msg: Message):
         f"⏳ Pending: {pending_count[0]}"
     )
 
-# ===== BROADCAST (Text/Video/Photo) =====
-@dp.message(F.from_user.id == ADMIN_ID)
-async def broadcast(msg: Message):
-    # Text broadcast
-    if msg.text and msg.text.startswith("📢 Рассылка:"):
-        text = msg.text.replace("📢 Рассылка:", "").strip()
+# ===== BROADCAST =====
+@dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
+async def broadcast_start(msg: Message):
+    await msg.answer("📢 Жібергің келетін мәтінді жібер 👇")
+
+    @dp.message(F.from_user.id == ADMIN_ID)
+    async def broadcast_send(inner_msg: Message):
+        text = inner_msg.text
         if not text:
-            return await msg.answer("❌ Мәтін жоқ!")
+            return await inner_msg.answer("❌ Мәтін жоқ!")
         users = await db_query("SELECT user_id FROM users", fetch="all")
         sent = 0
         for u in users:
@@ -243,38 +255,37 @@ async def broadcast(msg: Message):
                 await asyncio.sleep(0.05)
             except:
                 pass
-        await msg.answer(f"📢 Мәтіндік рассылка аяқталды: {sent}/{len(users)}")
-    # Video broadcast
-    elif msg.video:
-        f_id = msg.video.file_id
-        users = await db_query("SELECT user_id FROM users", fetch="all")
-        sent = 0
-        for u in users:
+        await inner_msg.answer(f"📢 Жіберілді: {sent}/{len(users)}")
+        dp.message.outer_handlers.remove(broadcast_send)  # remove handler after sending
+
+# ===== ADMIN GIVE BONUS =====
+@dp.message(F.text == "📤 Бонус беру", F.from_user.id == ADMIN_ID)
+async def give_bonus_start(msg: Message):
+    await msg.answer("👤 Бонус бергің келетін қолданушы ID-ын жібер:")
+
+    @dp.message(F.from_user.id == ADMIN_ID)
+    async def get_user(inner_msg: Message):
+        try:
+            user_id = int(inner_msg.text)
+        except:
+            return await inner_msg.answer("❌ ID дұрыс емес")
+        await inner_msg.answer(f"💰 Қанша бонус қосамыз {user_id}?")
+        
+        @dp.message(F.from_user.id == ADMIN_ID)
+        async def get_amount(amount_msg: Message):
             try:
-                await bot.send_video(u[0], f_id, caption="🎬 Админнан видео!")
-                sent += 1
-                await asyncio.sleep(0.05)
+                bonus = int(amount_msg.text)
             except:
-                pass
-        await msg.answer(f"📢 Видео рассылка аяқталды: {sent}/{len(users)}")
-    # Photo broadcast
-    elif msg.photo:
-        f_id = msg.photo[-1].file_id
-        users = await db_query("SELECT user_id FROM users", fetch="all")
-        sent = 0
-        for u in users:
-            try:
-                await bot.send_photo(u[0], f_id, caption="📸 Админнан фото!")
-                sent += 1
-                await asyncio.sleep(0.05)
-            except:
-                pass
-        await msg.answer(f"📢 Фото рассылка аяқталды: {sent}/{len(users)}")
+                return await amount_msg.answer("❌ Сандармен жазыңыз")
+            await db_query("UPDATE users SET bonus=bonus+? WHERE user_id=?", (bonus, user_id))
+            await amount_msg.answer(f"✅ {bonus} бонус {user_id}-ға қосылды!")
+            dp.message.outer_handlers.remove(get_amount)
+        dp.message.outer_handlers.remove(get_user)
 
 # ===== UNKNOWN MESSAGE =====
 @dp.message()
 async def unknown(msg: Message):
-    known_commands = ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "📤 Жіберу", "🎁 Күндік бонус", "💎 VIP", "⏳ Pending", "/start", "📊 Статистика"]
+    known_commands = ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "📤 Жіберу", "🎁 Күндік бонус", "💎 VIP", "⏳ Pending", "/start", "📊 Статистика", "📢 Рассылка", "📤 Бонус беру"]
     if not any(msg.text.startswith(k) for k in known_commands):
         await msg.answer("❌ Түсінбедім 🤔\nМенюдағы батырмаларды таңдаңыз немесе /start теріңіз.")
 
