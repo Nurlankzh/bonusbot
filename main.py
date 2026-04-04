@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- КОНФИГУРАЦИЯ ---
-# Railway-дегі Variables бөліміне BOT_KEY деп токенді қосуды ұмытпаңыз
+# Railway Variables бөліміне BOT_KEY деп токенді қосуды ұмытпаңыз
 MY_TOKEN = os.getenv("BOT_KEY", "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo")
 ADMIN_ID = 6303091468 
 CHANNEL_USERNAME = "@uyatsizoqiga"
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=MY_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# FSM Күйлері
+# FSM Күйлері (Админ панель үшін)
 class AdminStates(StatesGroup):
     broadcast_text = State()
     asking_bonus_all = State()
@@ -68,7 +68,8 @@ async def is_subscribed(user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except: return False
+    except: 
+        return False
 
 # =================== МЕНЮЛАР ===================
 def main_menu(user_id):
@@ -155,18 +156,23 @@ async def btn_send_info(msg: Message):
 
 @dp.message(F.video | F.photo)
 async def handle_uploads(msg: Message):
+    user_id = msg.from_user.id
     f_type = "video" if msg.video else "photo"
     f_id = msg.video.file_id if msg.video else msg.photo[-1].file_id
 
-    if msg.from_user.id == ADMIN_ID:
+    if user_id == ADMIN_ID:
         table = "videos" if f_type == "video" else "photos"
         await db_execute(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
-        await msg.answer("✅ Админ, файл базаға тікелей қосылды.")
+        await msg.answer(f"✅ Админ, бұл {f_type} базаға тікелей қосылды.")
     else:
-        await db_execute("INSERT INTO pending_files (user_id, file_id, file_type) VALUES (?, ?, ?)", (msg.from_user.id, f_id, f_type))
+        await db_execute("INSERT INTO pending_files (user_id, file_id, file_type) VALUES (?, ?, ?)", (user_id, f_id, f_type))
         await msg.answer("⏳ Рахмет! Файл админге жіберілді. Тексерілген соң бонус түседі.")
+        try:
+            await bot.send_message(ADMIN_ID, "🔔 Жаңа файл түсті! '⏳ Pending файлдар' батырмасын басыңыз.")
+        except: 
+            pass
 
-# --- ПЕНДИНГ (ТЕКСЕРУ) ---
+# --- ПЕНДИНГ (АДМИН ТЕКСЕРУІ) ---
 @dp.message(F.text == "⏳ Pending файлдар", F.from_user.id == ADMIN_ID)
 async def admin_pending(msg: Message):
     file = await db_fetch_one("SELECT id, user_id, file_id, file_type FROM pending_files LIMIT 1")
@@ -184,12 +190,12 @@ async def admin_pending(msg: Message):
 
 @dp.callback_query(F.data.startswith("app_") | F.data.startswith("dec_"))
 async def admin_decision(call: CallbackQuery):
-    action = call.data.split("_")[0]
-    db_id = call.data.split("_")[1]
+    action, db_id = call.data.split("_")
     
     file = await db_fetch_one("SELECT user_id, file_id, file_type FROM pending_files WHERE id=?", (db_id,))
     if not file:
         await call.answer("Файл табылмады")
+        await call.message.delete()
         return
 
     u_id, f_id, f_type = file
@@ -198,21 +204,25 @@ async def admin_decision(call: CallbackQuery):
         table = "videos" if f_type == "video" else "photos"
         await db_execute(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
         await db_execute("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, u_id))
-        try: await bot.send_message(u_id, f"✅ Сіздің файлыңыз мақұлданды! +{bonus} бонус берілді.")
-        except: pass
+        try: 
+            await bot.send_message(u_id, f"✅ Сіздің файлыңыз мақұлданды! +{bonus} бонус берілді.")
+        except: 
+            pass
     else:
-        try: await bot.send_message(u_id, "❌ Админ сіздің файлыңызды мақұлдамады.")
-        except: pass
+        try: 
+            await bot.send_message(u_id, "❌ Админ сіздің файлыңызды мақұлдамады.")
+        except: 
+            pass
 
     await db_execute("DELETE FROM pending_files WHERE id=?", (db_id,))
     await call.message.delete()
     # Келесі файлды автоматты түрде шығару
     await admin_pending(call.message)
 
-# --- БОНУС БЕРУ ЖҮЙЕСІ ---
+# --- БОНУС ТАРАТУ ---
 @dp.message(F.text == "👤 Жеке бонус", F.from_user.id == ADMIN_ID)
 async def adm_single(msg: Message, state: FSMContext):
-    await msg.answer("Пайдаланушы ID-ін жазыңыз:")
+    await msg.answer("Қолданушы ID-ін жазыңыз:")
     await state.set_state(AdminStates.asking_user_id)
 
 @dp.message(AdminStates.asking_user_id)
@@ -228,12 +238,12 @@ async def adm_final_single(msg: Message, state: FSMContext):
         amt, uid = int(msg.text), int(data['uid'])
         await db_execute("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (amt, uid))
         await msg.answer(f"✅ ID {uid} үшін {amt} бонус қосылды.")
-        try:
+        try: 
             await bot.send_message(uid, f"🎁 Менеджер сізге {amt} бонус берді!")
-        except:
-            await msg.answer("⚠️ Хабарлама жіберілмеді (қолданушы ботты блоктаған).")
-    except:
-        await msg.answer("Қате! Тек сан жазыңыз.")
+        except: 
+            pass
+    except: 
+        await msg.answer("Қате! Сан жазыңыз.")
     await state.clear()
 
 @dp.message(F.text == "👥 Жалпы бонус", F.from_user.id == ADMIN_ID)
@@ -246,60 +256,50 @@ async def adm_final_all(msg: Message, state: FSMContext):
     try:
         amt = int(msg.text)
         await db_execute("UPDATE users SET bonus = bonus + ?", (amt,))
-        await msg.answer(f"✅ Барлық пайдаланушыларға {amt} бонус берілді!")
-        
+        await msg.answer(f"✅ Барлығына {amt} бонус берілді!")
         async with aiosqlite.connect("bot.db") as db:
             async with db.execute("SELECT user_id FROM users") as cur:
-                users = await cur.fetchall()
-                for u in users:
-                    try: await bot.send_message(u[0], f"🎁 Сүйінші! Барлық қолданушыларға {amt} бонус берілді!")
+                async for row in cur:
+                    try: await bot.send_message(row[0], f"🎁 Сүйінші! Барлық қолданушыларға {amt} бонус берілді!")
                     except: continue
-    except:
+    except: 
         await msg.answer("Қате жазылды.")
     await state.clear()
 
 # --- СТАТИСТИКА ЖӘНЕ РАССЫЛКА ---
 @dp.message(F.text == "📊 Статистика", F.from_user.id == ADMIN_ID)
 async def adm_stats(msg: Message):
-    users = await db_fetch_one("SELECT COUNT(*) FROM users")
-    vids = await db_fetch_one("SELECT COUNT(*) FROM videos")
-    pts = await db_fetch_one("SELECT COUNT(*) FROM photos")
-    await msg.answer(f"📊 Статистика:\n👥 Пайдаланушылар: {users[0]}\n🎬 Видеолар: {vids[0]}\n🖼 Фотолар: {pts[0]}")
+    u = await db_fetch_one("SELECT COUNT(*) FROM users")
+    v = await db_fetch_one("SELECT COUNT(*) FROM videos")
+    p = await db_fetch_one("SELECT COUNT(*) FROM photos")
+    await msg.answer(f"📊 Статистика:\n👥 Пайдаланушылар: {u[0]}\n🎬 Видео: {v[0]}\n🖼 Фото: {p[0]}")
 
 @dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
 async def adm_broad(msg: Message, state: FSMContext):
-    await msg.answer("Рассылка мәтінін жіберіңіз:")
+    await msg.answer("Хабарлама мәтінін жазыңыз:")
     await state.set_state(AdminStates.broadcast_text)
 
 @dp.message(AdminStates.broadcast_text)
 async def adm_broad_send(msg: Message, state: FSMContext):
     async with aiosqlite.connect("bot.db") as db:
         async with db.execute("SELECT user_id FROM users") as cur:
-            users = await cur.fetchall()
-    count = 0
-    for u in users:
-        try:
-            await bot.send_message(u[0], msg.text)
-            count += 1
-        except: continue
-    await msg.answer(f"✅ Рассылка аяқталды. {count} адамға жетті.")
+            async for row in cur:
+                try: await bot.send_message(row[0], msg.text)
+                except: continue
+    await msg.answer("✅ Рассылка аяқталды.")
     await state.clear()
 
 @dp.message(F.text == "⭐ Бонус")
 async def show_bonus(msg: Message):
-    u_id = msg.from_user.id
-    u_data = await db_fetch_one("SELECT bonus FROM users WHERE user_id=?", (u_id,))
+    u_data = await db_fetch_one("SELECT bonus FROM users WHERE user_id=?", (msg.from_user.id,))
     bonus = u_data[0] if u_data else 0
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start={u_id}"
-    await msg.answer(f"💰 Сіздің балансыңыз: {bonus} бонус\n\n🔗 Реферал сілтемеңіз:\n`{ref_link}`\n\nӘр шақырылған адам үшін **+2 бонус** беріледі!", parse_mode="Markdown")
+    me = await bot.get_me()
+    ref = f"https://t.me/{me.username}?start={msg.from_user.id}"
+    await msg.answer(f"💰 Сіздің балансыңыз: {bonus} бонус\n\n🔗 Реферал сілтемеңіз:\n`{ref}`\n\nӘр шақырылған адам үшін +2 бонус беріледі!", parse_mode="Markdown")
 
 async def main():
     await init_db()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.error("Бот тоқтатылды!")
+    asyncio.run(main())
