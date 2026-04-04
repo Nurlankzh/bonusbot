@@ -10,7 +10,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- КОНФИГУРАЦИЯ ---
-# Railway Variables бөліміне BOT_KEY деп токенді қосуды ұмытпаңыз
 MY_TOKEN = os.getenv("BOT_KEY", "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo")
 ADMIN_ID = 6303091468 
 CHANNEL_USERNAME = "@uyatsizoqiga"
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=MY_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# FSM Күйлері (Админ панель үшін)
 class AdminStates(StatesGroup):
     broadcast_text = State()
     asking_bonus_all = State()
@@ -68,8 +66,7 @@ async def is_subscribed(user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except: 
-        return False
+    except: return False
 
 # =================== МЕНЮЛАР ===================
 def main_menu(user_id):
@@ -157,8 +154,10 @@ async def btn_send_info(msg: Message):
 @dp.message(F.video | F.photo)
 async def handle_uploads(msg: Message):
     user_id = msg.from_user.id
-    f_type = "video" if msg.video else "photo"
-    f_id = msg.video.file_id if msg.video else msg.photo[-1].file_id
+    if msg.video:
+        f_type, f_id = "video", msg.video.file_id
+    else:
+        f_type, f_id = "photo", msg.photo[-1].file_id
 
     if user_id == ADMIN_ID:
         table = "videos" if f_type == "video" else "photos"
@@ -169,13 +168,14 @@ async def handle_uploads(msg: Message):
         await msg.answer("⏳ Рахмет! Файл админге жіберілді. Тексерілген соң бонус түседі.")
         try:
             await bot.send_message(ADMIN_ID, "🔔 Жаңа файл түсті! '⏳ Pending файлдар' батырмасын басыңыз.")
-        except: 
-            pass
+        except: pass
 
 # --- ПЕНДИНГ (АДМИН ТЕКСЕРУІ) ---
 @dp.message(F.text == "⏳ Pending файлдар", F.from_user.id == ADMIN_ID)
 async def admin_pending(msg: Message):
+    # Базадан ең бірінші файлды алу
     file = await db_fetch_one("SELECT id, user_id, file_id, file_type FROM pending_files LIMIT 1")
+    
     if not file:
         await msg.answer("📂 Кезекте жаңа файлдар жоқ.")
         return
@@ -183,10 +183,17 @@ async def admin_pending(msg: Message):
     db_id, u_id, f_id, f_type = file
     cap = f"👤 Қолданушы: `{u_id}`\n📂 Түрі: {f_type}"
     
-    if f_type == "video":
-        await msg.answer_video(f_id, caption=cap, reply_markup=pending_kb(db_id), parse_mode="Markdown")
-    else:
-        await msg.answer_photo(f_id, caption=cap, reply_markup=pending_kb(db_id), parse_mode="Markdown")
+    try:
+        if f_type == "video":
+            await msg.answer_video(f_id, caption=cap, reply_markup=pending_kb(db_id), parse_mode="Markdown")
+        else:
+            await msg.answer_photo(f_id, caption=cap, reply_markup=pending_kb(db_id), parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Pending файл көрсетуде қате: {e}")
+        await msg.answer("❌ Файлды көрсету мүмкін болмады. Ол өшіріледі.")
+        await db_execute("DELETE FROM pending_files WHERE id=?", (db_id,))
+        # Келесісіне көшу
+        await admin_pending(msg)
 
 @dp.callback_query(F.data.startswith("app_") | F.data.startswith("dec_"))
 async def admin_decision(call: CallbackQuery):
@@ -204,31 +211,30 @@ async def admin_decision(call: CallbackQuery):
         table = "videos" if f_type == "video" else "photos"
         await db_execute(f"INSERT OR IGNORE INTO {table} (file_id) VALUES (?)", (f_id,))
         await db_execute("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, u_id))
-        try: 
-            await bot.send_message(u_id, f"✅ Сіздің файлыңыз мақұлданды! +{bonus} бонус берілді.")
-        except: 
-            pass
+        try: await bot.send_message(u_id, f"✅ Сіздің файлыңыз мақұлданды! +{bonus} бонус берілді.")
+        except: pass
+        await call.answer("Мақұлданды ✅")
     else:
-        try: 
-            await bot.send_message(u_id, "❌ Админ сіздің файлыңызды мақұлдамады.")
-        except: 
-            pass
+        try: await bot.send_message(u_id, "❌ Админ сіздің файлыңызды мақұлдамады.")
+        except: pass
+        await call.answer("Қабылданбады ❌")
 
     await db_execute("DELETE FROM pending_files WHERE id=?", (db_id,))
     await call.message.delete()
-    # Келесі файлды автоматты түрде шығару
+    
+    # Кезектегі келесі файлды автоматты шығару (call.message арқылы)
     await admin_pending(call.message)
 
-# --- БОНУС ТАРАТУ ---
+# --- БАСҚА ФУНКЦИЯЛАР (БОНУС, СТАТ, РАССЫЛКА) ---
 @dp.message(F.text == "👤 Жеке бонус", F.from_user.id == ADMIN_ID)
 async def adm_single(msg: Message, state: FSMContext):
-    await msg.answer("Қолданушы ID-ін жазыңыз:")
+    await msg.answer("ID жазыңыз:")
     await state.set_state(AdminStates.asking_user_id)
 
 @dp.message(AdminStates.asking_user_id)
 async def adm_id_step(msg: Message, state: FSMContext):
     await state.update_data(uid=msg.text)
-    await msg.answer("Қанша бонус қосу керек?")
+    await msg.answer("Қанша бонус?")
     await state.set_state(AdminStates.asking_bonus_single)
 
 @dp.message(AdminStates.asking_bonus_single)
@@ -238,17 +244,14 @@ async def adm_final_single(msg: Message, state: FSMContext):
         amt, uid = int(msg.text), int(data['uid'])
         await db_execute("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (amt, uid))
         await msg.answer(f"✅ ID {uid} үшін {amt} бонус қосылды.")
-        try: 
-            await bot.send_message(uid, f"🎁 Менеджер сізге {amt} бонус берді!")
-        except: 
-            pass
-    except: 
-        await msg.answer("Қате! Сан жазыңыз.")
+        try: await bot.send_message(uid, f"🎁 Менеджер сізге {amt} бонус берді!")
+        except: pass
+    except: await msg.answer("Қате! Сан жазыңыз.")
     await state.clear()
 
 @dp.message(F.text == "👥 Жалпы бонус", F.from_user.id == ADMIN_ID)
 async def adm_all(msg: Message, state: FSMContext):
-    await msg.answer("Барлығына қанша бонус қосу керек?")
+    await msg.answer("Барлығына қанша бонус?")
     await state.set_state(AdminStates.asking_bonus_all)
 
 @dp.message(AdminStates.asking_bonus_all)
@@ -260,13 +263,11 @@ async def adm_final_all(msg: Message, state: FSMContext):
         async with aiosqlite.connect("bot.db") as db:
             async with db.execute("SELECT user_id FROM users") as cur:
                 async for row in cur:
-                    try: await bot.send_message(row[0], f"🎁 Сүйінші! Барлық қолданушыларға {amt} бонус берілді!")
+                    try: await bot.send_message(row[0], f"🎁 Сүйінші! Барлығына {amt} бонус берілді!")
                     except: continue
-    except: 
-        await msg.answer("Қате жазылды.")
+    except: await msg.answer("Қате!")
     await state.clear()
 
-# --- СТАТИСТИКА ЖӘНЕ РАССЫЛКА ---
 @dp.message(F.text == "📊 Статистика", F.from_user.id == ADMIN_ID)
 async def adm_stats(msg: Message):
     u = await db_fetch_one("SELECT COUNT(*) FROM users")
@@ -276,7 +277,7 @@ async def adm_stats(msg: Message):
 
 @dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
 async def adm_broad(msg: Message, state: FSMContext):
-    await msg.answer("Хабарлама мәтінін жазыңыз:")
+    await msg.answer("Мәтін жазыңыз:")
     await state.set_state(AdminStates.broadcast_text)
 
 @dp.message(AdminStates.broadcast_text)
@@ -286,7 +287,7 @@ async def adm_broad_send(msg: Message, state: FSMContext):
             async for row in cur:
                 try: await bot.send_message(row[0], msg.text)
                 except: continue
-    await msg.answer("✅ Рассылка аяқталды.")
+    await msg.answer("✅ Аяқталды.")
     await state.clear()
 
 @dp.message(F.text == "⭐ Бонус")
@@ -295,7 +296,7 @@ async def show_bonus(msg: Message):
     bonus = u_data[0] if u_data else 0
     me = await bot.get_me()
     ref = f"https://t.me/{me.username}?start={msg.from_user.id}"
-    await msg.answer(f"💰 Сіздің балансыңыз: {bonus} бонус\n\n🔗 Реферал сілтемеңіз:\n`{ref}`\n\nӘр шақырылған адам үшін +2 бонус беріледі!", parse_mode="Markdown")
+    await msg.answer(f"💰 Баланс: {bonus} бонус\n\n🔗 Реферал сілтеме:\n`{ref}`", parse_mode="Markdown")
 
 async def main():
     await init_db()
