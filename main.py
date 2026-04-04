@@ -9,7 +9,7 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 # ================= CONFIG =================
 BOT_TOKEN = "8775883190:AAFEbBqsZDJvKo8H2yWES1U6rgnbVBEXvhs"
 ADMIN_ID = 6303091468
-CHANNEL_USERNAME = "@senin_kanalyngyz"
+CHANNEL_USERNAME = "@uyatsizoqiga"
 REF_BOT_USERNAME = "@Deetskay_bot"
 VIP_CONTACT = "Kazhabs"
 DB_FILE = "data.db"
@@ -101,7 +101,7 @@ def check_subscription(user_id):
 def get_ref_msg(user_id):
     return (f"❌ Сіздің бонустарыңыз бітті!\n\n"
             f"Жалғастыру үшін дос шақырыңыз. Әр дос үшін **+6💸** беріледі.\n"
-            f"🔗 Сіздің сілтемеңіз:\n`https://t.me/{REF_BOT_USERNAME}?start={user_id}`")
+            f"🔗 Сіздің сілтемеңіз:\n`https://t.me/{Deetskay_bot}?start={user_id}`")
 
 def file_exists(file_id, content_type):
     conn = get_db_connection()
