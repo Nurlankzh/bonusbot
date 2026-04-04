@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 # ===== CONFIG =====
-TOKEN = "7748542247:AAGbtxMx-1F_08Xc2MKJW0nDIsv6vVvOlRo"
+TOKEN = "PUT_YOUR_TOKEN_HERE"
 ADMIN_ID = 6303091468
 REF_LINK = "https://t.me/Darvinuyatszdaribot?start=6303091468"
 
@@ -58,10 +58,8 @@ def main_kb(user_id):
     kb.row(KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото"))
     kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Жіберу"))
     kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
-
     if user_id == ADMIN_ID:
         kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
-
     return kb.as_markup(resize_keyboard=True)
 
 # ===== START =====
@@ -70,7 +68,6 @@ async def start(msg: Message):
     user = await db_query("SELECT 1 FROM users WHERE user_id=?", (msg.from_user.id,), "one")
     if not user:
         await db_query("INSERT INTO users (user_id) VALUES (?)", (msg.from_user.id,))
-    
     await msg.answer(
         "🔥 Қош келдің!\n\n"
         "🎥 Видео көр\n"
@@ -229,22 +226,50 @@ async def stats(msg: Message):
         f"⏳ Pending: {pending_count[0]}"
     )
 
-# ===== BROADCAST =====
-@dp.message(F.text.startswith("📢 Рассылка:"), F.from_user.id == ADMIN_ID)
+# ===== BROADCAST (Text/Video/Photo) =====
+@dp.message(F.from_user.id == ADMIN_ID)
 async def broadcast(msg: Message):
-    text = msg.text.replace("📢 Рассылка:", "").strip()
-    if not text:
-        return await msg.answer("❌ Мәтін жоқ!")
-    users = await db_query("SELECT user_id FROM users", fetch="all")
-    sent = 0
-    for u in users:
-        try:
-            await bot.send_message(u[0], text)
-            sent += 1
-            await asyncio.sleep(0.05)
-        except:
-            pass
-    await msg.answer(f"📢 Жетті: {sent}/{len(users)}")
+    # Text broadcast
+    if msg.text and msg.text.startswith("📢 Рассылка:"):
+        text = msg.text.replace("📢 Рассылка:", "").strip()
+        if not text:
+            return await msg.answer("❌ Мәтін жоқ!")
+        users = await db_query("SELECT user_id FROM users", fetch="all")
+        sent = 0
+        for u in users:
+            try:
+                await bot.send_message(u[0], text)
+                sent += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        await msg.answer(f"📢 Мәтіндік рассылка аяқталды: {sent}/{len(users)}")
+    # Video broadcast
+    elif msg.video:
+        f_id = msg.video.file_id
+        users = await db_query("SELECT user_id FROM users", fetch="all")
+        sent = 0
+        for u in users:
+            try:
+                await bot.send_video(u[0], f_id, caption="🎬 Админнан видео!")
+                sent += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        await msg.answer(f"📢 Видео рассылка аяқталды: {sent}/{len(users)}")
+    # Photo broadcast
+    elif msg.photo:
+        f_id = msg.photo[-1].file_id
+        users = await db_query("SELECT user_id FROM users", fetch="all")
+        sent = 0
+        for u in users:
+            try:
+                await bot.send_photo(u[0], f_id, caption="📸 Админнан фото!")
+                sent += 1
+                await asyncio.sleep(0.05)
+            except:
+                pass
+        await msg.answer(f"📢 Фото рассылка аяқталды: {sent}/{len(users)}")
 
 # ===== UNKNOWN MESSAGE =====
 @dp.message()
