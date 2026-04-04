@@ -56,18 +56,12 @@ async def db_query(sql, params=(), fetch=None):
 def main_kb(user_id):
     kb = ReplyKeyboardBuilder()
     kb.row(KeyboardButton(text="🎥 Видео"), KeyboardButton(text="🖼 Фото"))
-    kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Жіберу"))
+    kb.row(KeyboardButton(text="⭐ Бонус"), KeyboardButton(text="📤 Бонус беру"))
     kb.row(KeyboardButton(text="🎁 Күндік бонус"), KeyboardButton(text="💎 VIP"))
 
     if user_id == ADMIN_ID:
-        kb.row(
-            KeyboardButton(text="⏳ Pending"),
-            KeyboardButton(text="📊 Статистика")
-        )
-        kb.row(
-            KeyboardButton(text="📢 Рассылка"),
-            KeyboardButton(text="📤 Бонус беру")
-        )
+        kb.row(KeyboardButton(text="⏳ Pending"), KeyboardButton(text="📊 Статистика"))
+        kb.row(KeyboardButton(text="📢 Рассылка"))
 
     return kb.as_markup(resize_keyboard=True)
 
@@ -237,15 +231,17 @@ async def stats(msg: Message):
     )
 
 # ===== BROADCAST =====
+broadcast_state = {}
+
 @dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
 async def broadcast_start(msg: Message):
-    await msg.answer("📢 Жібергің келетін мәтінді жібер 👇")
+    broadcast_state[msg.from_user.id] = True
+    await msg.answer("📢 Таратқыңыз келетін хабарламаны жіберіңіз:")
 
-    @dp.message(F.from_user.id == ADMIN_ID)
-    async def broadcast_send(inner_msg: Message):
-        text = inner_msg.text
-        if not text:
-            return await inner_msg.answer("❌ Мәтін жоқ!")
+@dp.message(F.from_user.id == ADMIN_ID)
+async def broadcast_send(msg: Message):
+    if broadcast_state.get(msg.from_user.id):
+        text = msg.text
         users = await db_query("SELECT user_id FROM users", fetch="all")
         sent = 0
         for u in users:
@@ -255,37 +251,44 @@ async def broadcast_start(msg: Message):
                 await asyncio.sleep(0.05)
             except:
                 pass
-        await inner_msg.answer(f"📢 Жіберілді: {sent}/{len(users)}")
-        dp.message.outer_handlers.remove(broadcast_send)  # remove handler after sending
+        await msg.answer(f"📢 Жарияланды: {sent}/{len(users)}")
+        broadcast_state[msg.from_user.id] = False
 
 # ===== ADMIN GIVE BONUS =====
-@dp.message(F.text == "📤 Бонус беру", F.from_user.id == ADMIN_ID)
-async def give_bonus_start(msg: Message):
-    await msg.answer("👤 Бонус бергің келетін қолданушы ID-ын жібер:")
+bonus_state = {}
 
-    @dp.message(F.from_user.id == ADMIN_ID)
-    async def get_user(inner_msg: Message):
+@dp.message(F.text == "📤 Бонус беру", F.from_user.id == ADMIN_ID)
+async def give_bonus(msg: Message):
+    bonus_state[msg.from_user.id] = {"step": "id"}
+    await msg.answer("👤 Қолданушының Telegram ID-ын жіберіңіз:")
+
+@dp.message(F.from_user.id == ADMIN_ID)
+async def give_bonus_step(msg: Message):
+    state = bonus_state.get(msg.from_user.id)
+    if not state:
+        return
+    if state["step"] == "id":
         try:
-            user_id = int(inner_msg.text)
-        except:
-            return await inner_msg.answer("❌ ID дұрыс емес")
-        await inner_msg.answer(f"💰 Қанша бонус қосамыз {user_id}?")
-        
-        @dp.message(F.from_user.id == ADMIN_ID)
-        async def get_amount(amount_msg: Message):
-            try:
-                bonus = int(amount_msg.text)
-            except:
-                return await amount_msg.answer("❌ Сандармен жазыңыз")
-            await db_query("UPDATE users SET bonus=bonus+? WHERE user_id=?", (bonus, user_id))
-            await amount_msg.answer(f"✅ {bonus} бонус {user_id}-ға қосылды!")
-            dp.message.outer_handlers.remove(get_amount)
-        dp.message.outer_handlers.remove(get_user)
+            user_id = int(msg.text)
+        except ValueError:
+            return await msg.answer("❌ ID дұрыс емес, тек сандармен жазыңыз.")
+        state["user_id"] = user_id
+        state["step"] = "amount"
+        return await msg.answer(f"💰 {user_id} қолданушыға қанша бонус қосамыз?")
+    elif state["step"] == "amount":
+        try:
+            bonus = int(msg.text)
+        except ValueError:
+            return await msg.answer("❌ Сандармен жазыңыз.")
+        await db_query("UPDATE users SET bonus = bonus + ? WHERE user_id = ?", (bonus, state["user_id"]))
+        await msg.answer(f"✅ {bonus} бонус {state['user_id']}-ға қосылды!")
+        bonus_state.pop(msg.from_user.id)
 
 # ===== UNKNOWN MESSAGE =====
 @dp.message()
 async def unknown(msg: Message):
-    known_commands = ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "📤 Жіберу", "🎁 Күндік бонус", "💎 VIP", "⏳ Pending", "/start", "📊 Статистика", "📢 Рассылка", "📤 Бонус беру"]
+    known_commands = ["🎥 Видео", "🖼 Фото", "⭐ Бонус", "📤 Бонус беру", "🎁 Күндік бонус",
+                      "💎 VIP", "⏳ Pending", "📊 Статистика", "📢 Рассылка", "/start"]
     if not any(msg.text.startswith(k) for k in known_commands):
         await msg.answer("❌ Түсінбедім 🤔\nМенюдағы батырмаларды таңдаңыз немесе /start теріңіз.")
 
