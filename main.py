@@ -109,7 +109,7 @@ def get_ref_msg(user_id):
             f"🔗 Сіздің сілтемеңіз:\n`https://t.me/{REF_BOT_USERNAME}?start={user_id}`")
 
 # ==========================================
-# HANDLERS
+# START COMMAND
 # ==========================================
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -121,6 +121,9 @@ def start_cmd(message):
     markup.add(InlineKeyboardButton("✅ 18-ден астым", callback_data="confirm_adult"))
     bot.send_message(user_id, "🔞 Бұл ботта ересектерге арналған контент бар. Жасыңызды растаңыз:", reply_markup=markup)
 
+# ==========================================
+# CALLBACK HANDLER
+# ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_manager(call):
     user_id = call.from_user.id
@@ -147,7 +150,9 @@ def callback_manager(call):
         bot.edit_message_caption("✅ Мақұлданды", ADMIN_ID, call.message.message_id)
     conn.close()
 
-# --- Daily Bonus ---
+# ==========================================
+# DAILY BONUS
+# ==========================================
 @bot.message_handler(func=lambda m: m.text == "🎁 Күндік бонус алу")
 def daily_bonus_handler(message):
     user_id = message.from_user.id
@@ -168,7 +173,28 @@ def daily_bonus_handler(message):
     bot.send_message(user_id, f"🎉 +10💸 бонус берілді!\n💰 Жаңа баланс: {new_balance}💸")
     conn.close()
 
-# --- Main Menu Handler ---
+# ==========================================
+# ADMIN BONUS PROCESS
+# ==========================================
+def process_bonus(message):
+    try:
+        data = message.text.split()
+        target_id, amount = int(data[0]), int(data[1])
+        conn = get_db_connection()
+        with db_lock:
+            conn.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, target_id))
+            conn.commit()
+        conn.close()
+        bot.send_message(ADMIN_ID, f"✅ {amount}💸 бонус {target_id} ID пайдаланушыға сәтті берілді!")
+        try:
+            bot.send_message(target_id, f"🎁 Сізге админ {amount}💸 бонус берді!")
+        except: pass
+    except Exception:
+        bot.send_message(ADMIN_ID, "❌ Қате. Формат: ID сома (мысалы: 123456789 100)")
+
+# ==========================================
+# MAIN MENU HANDLER
+# ==========================================
 @bot.message_handler(func=lambda m: True)
 def main_handler(message):
     user_id = message.from_user.id
@@ -219,9 +245,10 @@ def main_handler(message):
     elif text == "➕ Видео/Фото жіберу":
         bot.send_message(user_id, "📩 Файл жіберіңіз (Фото немесе Видео), модерациядан кейін бонус беріледі.")
 
-    # --- Админ: бонус беру (интеллектуалды) ---
+    # --- Админ: бонус беру ---
     elif text == "💰 Бонус беру" and user_id == ADMIN_ID:
-        bot.send_message(ADMIN_ID, "⚡️ Бонус беру форматы: `ID сома` (Мысалы: `123456789 100`)", parse_mode="Markdown")
+        bot.send_message(ADMIN_ID, "⚡️ Бонус беру форматы: `ID сома` (Мысалы: `123456789 100)`", parse_mode="Markdown")
+        bot.register_next_step_handler(message, process_bonus)
 
     # --- Админ: pending файлдар ---
     elif text == "✅ Pending файлдар" and user_id == ADMIN_ID:
@@ -242,7 +269,9 @@ def main_handler(message):
 
     conn.close()
 
-# --- Upload Handler ---
+# ==========================================
+# UPLOAD HANDLER
+# ==========================================
 @bot.message_handler(content_types=['photo', 'video'])
 def handle_uploads(message):
     user_id = message.from_user.id
