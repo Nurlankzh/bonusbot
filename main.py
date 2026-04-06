@@ -10,7 +10,7 @@ from aiogram.utils.deep_linking import create_start_link, decode_payload
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = "8719065946:AAG8l3saBCpyzCWzmENkZZ4nhPSP73W_jX0" # ЖАҢА ТОКЕН
 ADMIN_ID = 6303091468
-MANAGER_USER = "@Kazhabs"
+MANAGER_USER = "@QAZAQSHACONTENT18"
 BOT_USERNAME = "qozubot" # ЖАҢА ЮЗЕРНЕЙМ
 
 logging.basicConfig(level=logging.INFO)
