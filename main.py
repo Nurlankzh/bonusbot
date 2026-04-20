@@ -1,18 +1,20 @@
 import asyncio
 import logging
 import aiosqlite
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.deep_linking import decode_payload
+from aiogram.utils.deep_linking import create_start_link, decode_payload
+from aiogram.exceptions import TelegramForbiddenError
 
 # --- КОНФИГУРАЦИЯ ---
-TOKEN = "8576637032:AAFVcc8Gr8vySyEvDCsnhjYhLcz5dPjkDzE" 
+TOKEN = "8244608313:AAE40OlPa3x06gcplFzDPTF-h4RATJjkczM"
 ADMIN_ID = 6303091468
 MANAGER_USER = "@QAZAQSHACONTENT18"
-BOT_USERNAME = "qozu_bot" 
-TARGET_CHANNEL = "@uyatsizoqiga" # Тексерілетін канал
+BOT_USERNAME = "Qozunet_bot"
+TARGET_CHANNEL = "@uyatsizoqiga" # Тіркелу қажет канал
+CHANNEL_URL = "https://t.me/uyatsizoqiga"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
@@ -31,7 +33,8 @@ async def init_db():
             referrer_id INTEGER,
             last_video_id INTEGER DEFAULT 0,
             last_photo_id INTEGER DEFAULT 0,
-            task_done INTEGER DEFAULT 0)''')
+            is_blocked INTEGER DEFAULT 0,
+            task_completed INTEGER DEFAULT 0)''') # task_completed: 0-істемеген, 1-күтуде, 2-аяқталды
         
         await db.execute('''CREATE TABLE IF NOT EXISTS content (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -44,7 +47,7 @@ async def init_db():
 def get_main_kb():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🎥 Видео көру"), KeyboardButton(text="🖼 Фото көру")],
-        [KeyboardButton(text="🎁 Тапсырма"), KeyboardButton(text="👤 Профиль")],
+        [KeyboardButton(text="🎁 Задания"), KeyboardButton(text="👤 Профиль")],
         [KeyboardButton(text="💎 Канал сатып алу")]
     ], resize_keyboard=True)
 
@@ -58,77 +61,40 @@ def get_admin_kb():
 # --- ФУНКЦИЯЛАР ---
 async def delete_message_after_delay(chat_id: int, message_id: int, delay: int = 7200):
     await asyncio.sleep(delay)
-    try:
-        await bot.delete_message(chat_id, message_id)
+    try: await bot.delete_message(chat_id, message_id)
     except: pass
 
-async def check_sub(user_id: int):
+async def check_subscription(user_id: int):
     try:
         member = await bot.get_chat_member(chat_id=TARGET_CHANNEL, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except:
         return False
 
-async def wait_and_check_task(user_id: int):
-    await asyncio.sleep(600) # 10 минут
-    is_still_sub = await check_sub(user_id)
-    if is_still_sub:
+# Тапсырманы тексеру таймері (10 минут = 600 сек)
+async def process_task_bonus(user_id: int):
+    await asyncio.sleep(600)
+    if await check_subscription(user_id):
         async with aiosqlite.connect("bot_main_v3.db") as db:
-            await db.execute("UPDATE users SET balance = balance + 25.0, task_done = 1 WHERE user_id = ?", (user_id,))
+            await db.execute("UPDATE users SET balance = balance + 25.0, task_completed = 2 WHERE user_id = ?", (user_id,))
             await db.commit()
-        try:
-            await bot.send_message(user_id, "✅ Құттықтаймыз! Сіз 10 минут бойы каналда болдыңыз. Балансыңызға 25$ бонус қосылды!")
+        try: await bot.send_message(user_id, "✅ Құттықтаймыз! Сіз каналдан шықпадыңыз, 25$ бонус есептелді!")
         except: pass
     else:
-        try:
-            await bot.send_message(user_id, "❌ Өкінішке орай, сіз каналдан шығып кеттіңіз. Бонус берілмеді.")
+        async with aiosqlite.connect("bot_main_v3.db") as db:
+            await db.execute("UPDATE users SET task_completed = 0 WHERE user_id = ?", (user_id,))
+            await db.commit()
+        try: await bot.send_message(user_id, "❌ Өкінішке орай, сіз каналдан шығып кеттіңіз немесе тіркелмедіңіз. Бонус берілмеді.")
         except: pass
 
-# --- КОНТЕНТ ШЫҒАРУ ---
-async def send_media(message: types.Message, m_type: str):
-    user_id = message.from_user.id
-    async with aiosqlite.connect("bot_main_v3.db") as db:
-        res = await (await db.execute("SELECT balance, last_video_id, last_photo_id FROM users WHERE user_id = ?", (user_id,))).fetchone()
-        if not res: return
-        
-        balance, last_v, last_p = res
-        last_id = last_v if m_type == "video" else last_p
-
-        if balance < 5.0:
-            link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-            return await message.answer(f"💰 Баланс: {balance}$\n❌ Көру үшін кемінде 5$ керек.\n\n🔗 Досыңызды шақырып, +10$ бонус алыңыз:\n{link}")
-
-        media = await (await db.execute("SELECT id, file_id FROM content WHERE file_type = ? AND is_approved = 1 AND id > ? ORDER BY id ASC LIMIT 1", (m_type, last_id))).fetchone()
-        if not media:
-            media = await (await db.execute("SELECT id, file_id FROM content WHERE file_type = ? AND is_approved = 1 ORDER BY id ASC LIMIT 1", (m_type,))).fetchone()
-
-        if not media:
-            return await message.answer("😔 Әзірге базада контент жоқ.")
-
-        new_balance = balance - 5.0
-        col_name = "last_video_id" if m_type == "video" else "last_photo_id"
-        await db.execute(f"UPDATE users SET balance = ?, {col_name} = ? WHERE user_id = ?", (new_balance, media[0], user_id))
-        await db.commit()
-
-        caption = f"✅ Көру сәтті! \n💰 Қалған баланс: {new_balance}$\n\n⚠️ Бұл хабарлама 2 сағаттан кейін автоматты түрде жойылады!"
-        
-        try:
-            if m_type == "video":
-                sent = await bot.send_video(user_id, media[1], caption=caption, protect_content=True)
-            else:
-                sent = await bot.send_photo(user_id, media[1], caption=caption, protect_content=True)
-            asyncio.create_task(delete_message_after_delay(user_id, sent.message_id))
-        except:
-            await message.answer("❌ Файлды жіберу кезінде қате кетті.")
-
-# --- СТАРТ ---
+# --- КОМАНДАЛАР ---
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-    payload = message.text.split()
     ref_id = None
-    if len(payload) > 1 and payload[1].isdigit():
-        ref_id = int(payload[1])
+    args = message.text.split()
+    if len(args) > 1 and args[1].isdigit():
+        ref_id = int(args[1])
 
     async with aiosqlite.connect("bot_main_v3.db") as db:
         user = await (await db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))).fetchone()
@@ -138,112 +104,151 @@ async def start_cmd(message: types.Message):
             if ref_id and ref_id != user_id:
                 await db.execute("UPDATE users SET balance = balance + 10.0 WHERE user_id = ?", (ref_id,))
                 await db.commit()
-                try: await bot.send_message(ref_id, "🤝 Жаңа дос қосылды: +10$ бонус берілді!")
+                try: await bot.send_message(ref_id, "🤝 Жаңа реферал! +10$ бонус берілді!")
                 except: pass
 
     if user_id == ADMIN_ID:
-        await message.answer("👑 Админ панеліне қош келдіңіз!", reply_markup=get_admin_kb())
+        await message.answer("👑 Админ панель", reply_markup=get_admin_kb())
     else:
-        await message.answer("🌟 Қош келдіңіз! Мәзірді таңдаңыз:", reply_markup=get_main_kb())
+        await message.answer("🌟 Қош келдіңіз! Контент көру үшін баланс қажет.", reply_markup=get_main_kb())
 
-# --- НЕГІЗГІ ХЭНДЛЕР ---
+# --- ХЭНДЛЕРЛЕР ---
 @dp.message()
 async def handle_messages(message: types.Message):
     user_id = message.from_user.id
 
+    # Админ логикасы
     if user_id == ADMIN_ID:
-        if user_id in give_balance_mode:
-            try:
-                target_id, amount = message.text.split()
-                async with aiosqlite.connect("bot_main_v3.db") as db:
-                    await db.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (float(amount), int(target_id)))
-                    await db.commit()
-                await message.answer(f"✅ ID {target_id} +{amount}$", reply_markup=get_admin_kb())
-                give_balance_mode.remove(user_id); return
-            except:
-                await message.answer("Қате формат!"); give_balance_mode.remove(user_id); return
+        if message.text == "📊 Статистика":
+            async with aiosqlite.connect("bot_main_v3.db") as db:
+                u_all = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
+                u_blocked = (await (await db.execute("SELECT COUNT(*) FROM users WHERE is_blocked = 1")).fetchone())[0]
+                v_count = (await (await db.execute("SELECT COUNT(*) FROM content WHERE file_type = 'video' AND is_approved = 1")).fetchone())[0]
+                p_count = (await (await db.execute("SELECT COUNT(*) FROM content WHERE file_type = 'photo' AND is_approved = 1")).fetchone())[0]
+                
+                text = (f"📊 **Бот статистикасы:**\n\n"
+                        f"👥 Барлық пайдаланушылар: {u_all}\n"
+                        f"🚫 Ботты бұғаттағандар: {u_blocked}\n"
+                        f"🎥 Видео саны: {v_count}\n"
+                        f"🖼 Фото саны: {p_count}\n"
+                        f"✅ Белсенді: {u_all - u_blocked}")
+                await message.answer(text, parse_mode="Markdown")
+            return
 
         if user_id in broadcast_mode:
             broadcast_mode.remove(user_id)
             async with aiosqlite.connect("bot_main_v3.db") as db:
                 users = await (await db.execute("SELECT user_id FROM users")).fetchall()
-                count, blocked = 0, 0
+                ok, block = 0, 0
                 for (u_id,) in users:
                     try:
                         await message.copy_to(u_id)
-                        count += 1
+                        ok += 1
                         await asyncio.sleep(0.05)
-                    except: blocked += 1
-            await message.answer(f"✅ Жіберілді: {count}\n🚫 Бұғаттағандар: {blocked}", reply_markup=get_admin_kb())
+                    except TelegramForbiddenError:
+                        await db.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (u_id,))
+                        block += 1
+                    except: pass
+                await db.commit()
+            await message.answer(f"📢 Сәтті: {ok}\n🚫 Блоктағандар: {block}")
             return
-
-        if message.text == "📊 Статистика":
-            async with aiosqlite.connect("bot_main_v3.db") as db:
-                u_count = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
-                v_count = (await (await db.execute("SELECT COUNT(*) FROM content WHERE file_type='video' AND is_approved=1")).fetchone())[0]
-                p_count = (await (await db.execute("SELECT COUNT(*) FROM content WHERE file_type='photo' AND is_approved=1")).fetchone())[0]
-                await message.answer(f"📊 **Статистика:**\n👤 Юзерлер: {u_count}\n🎥 Видео: {v_count}\n🖼 Фото: {p_count}")
-            return
-        elif message.text == "💰 Доллар беру":
+        
+        # (Басқа админ кнопкалары бұрынғыша...)
+        if message.text == "💰 Доллар беру":
             give_balance_mode.add(user_id)
-            await message.answer("💵 ID және сома:"); return
+            await message.answer("ID және соманы жазыңыз (мысалы: 12345 50):")
+            return
         elif message.text == "📢 Рассылка":
             broadcast_mode.add(user_id)
-            await message.answer("📝 Хабарлама жазыңыз:"); return
+            await message.answer("Хабарлама жіберіңіз:")
+            return
+        elif message.text == "🏠 Пайдаланушы мәзірі":
+            await message.answer("Ауыстырылды", reply_markup=get_main_kb())
+            return
         elif message.text == "🔒 Жасырын":
             await show_approval(message); return
-        elif message.text == "🏠 Пайдаланушы мәзірі":
-            await message.answer("Ауыстырылды", reply_markup=get_main_kb()); return
 
-    if message.text == "🎁 Тапсырма":
-        async with aiosqlite.connect("bot_main_v3.db") as db:
-            user_data = await (await db.execute("SELECT task_done FROM users WHERE user_id = ?", (user_id,))).fetchone()
-            if user_data and user_data[0] == 1:
-                return await message.answer("❌ Бұл тапсырма орындалған!")
-        
-        ikb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Каналға тіркелу", url=f"https://t.me/{TARGET_CHANNEL[1:]}")],
-            [InlineKeyboardButton(text="✅ Тіркелдім", callback_data="check_task")]
-        ])
-        await message.answer("🎁 Тіркеліп 10 минут күтіңіз және 25$ алыңыз!", reply_markup=ikb)
-
-    elif message.text == "👤 Профиль":
+    # Пайдаланушы логикасы
+    if message.text == "👤 Профиль":
         async with aiosqlite.connect("bot_main_v3.db") as db:
             res = await (await db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))).fetchone()
             ref_count = await (await db.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))).fetchone()
             link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-            await message.answer(f"👤 ID: `{user_id}`\n💰 Баланс: {res[0]}$\n👥 Реферал: {ref_count[0]}\n🔗 {link}", parse_mode="Markdown")
+            await message.answer(f"👤 **Профиль**\n\n🆔 ID: `{user_id}`\n💰 Баланс: {res[0]}$\n👥 Шақырылғандар: {ref_count[0]}\n\n🔗 Реферал сілтеме:\n`{link}`", parse_mode="Markdown")
 
-    elif message.text == "🎥 Видео көру": await send_media(message, "video")
-    elif message.text == "🖼 Фото көру": await send_media(message, "photo")
+    elif message.text == "🎁 Задания":
+        async with aiosqlite.connect("bot_main_v3.db") as db:
+            status = (await (await db.execute("SELECT task_completed FROM users WHERE user_id = ?", (user_id,))).fetchone())[0]
+        
+        if status == 2:
+            await message.answer("❌ Сіз бұл тапсырманы орындап қойғансыз! Бонус тек бір рет беріледі.")
+        elif status == 1:
+            await message.answer("⏳ Тапсырма тексерілуде... 10 минут күтіңіз. Каналдан шықпаңыз!")
+        else:
+            ikb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="1. Каналға тіркелу", url=CHANNEL_URL)],
+                [InlineKeyboardButton(text="2. Тіркелдім ✅", callback_data="check_task")]
+            ])
+            await message.answer("🎁 **Арнайы тапсырма!**\n\nТөмендегі каналға тіркелсеңіз, автоматты түрде **25$** бонус аласыз!\n\n"
+                                 "⚠️ **Шарт:** Тіркелгеннен кейін 10 минут ішінде шығып кетпеуіңіз керек. "
+                                 "Бот автоматты түрде тексереді. Бұл мүмкіндік тек 1 рет беріледі!", reply_markup=ikb, parse_mode="Markdown")
+
+    elif message.text == "🎥 Видео көру":
+        await send_media(message, "video")
+    elif message.text == "🖼 Фото көру":
+        await send_media(message, "photo")
     elif message.text == "💎 Канал сатып алу":
         ikb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Менеджер", url=f"https://t.me/{MANAGER_USER[1:]}")]])
-        await message.answer("💎 Жабық канал үшін жазыңыз:", reply_markup=ikb)
+        await message.answer("💎 Жабық каналға кіру үшін жазыңыз:", reply_markup=ikb)
 
+    # Фото/Видео сақтау
     if (message.video or message.photo) and message.chat.type == "private":
         f_id = message.video.file_id if message.video else message.photo[-1].file_id
         f_type = "video" if message.video else "photo"
-        is_a = 1 if user_id == ADMIN_ID else 0
         async with aiosqlite.connect("bot_main_v3.db") as db:
-            await db.execute("INSERT INTO content (file_id, file_type, is_approved) VALUES (?, ?, ?)", (f_id, f_type, is_a))
+            await db.execute("INSERT INTO content (file_id, file_type, is_approved) VALUES (?, ?, ?)", (f_id, f_type, 1 if user_id == ADMIN_ID else 0))
             await db.commit()
-        await message.answer("✅ Сақталды!" if is_a else "📩 Күтуге жіберілді.")
+        await message.answer("✅ Сақталды!" if user_id == ADMIN_ID else "📩 Тексеруге жіберілді.")
 
 # --- CALLBACKS ---
 @dp.callback_query(F.data == "check_task")
-async def task_callback(call: types.CallbackQuery):
-    if await check_sub(call.from_user.id):
-        await call.answer("✅ Тексеру басталды! 10 минут күтіңіз.", show_alert=True)
-        await call.message.edit_text("⏳ Тексерілуде... 10 минуттан соң бонус түседі.")
-        asyncio.create_task(wait_and_check_task(call.from_user.id))
+async def check_task_handler(call: types.CallbackQuery):
+    if await check_subscription(call.from_user.id):
+        async with aiosqlite.connect("bot_main_v3.db") as db:
+            await db.execute("UPDATE users SET task_completed = 1 WHERE user_id = ?", (call.from_user.id,))
+            await db.commit()
+        await call.message.edit_text("⏳ Өте жақсы! Енді 10 минут каналда қалыңыз. Бот автоматты түрде балансыңызды толтырады.")
+        asyncio.create_task(process_task_bonus(call.from_user.id))
     else:
-        await call.answer("❌ Тіркелмедіңіз!", show_alert=True)
+        await call.answer("❌ Сіз әлі тіркелмедіңіз!", show_alert=True)
+
+# (Қалған медиа жіберу және модерация функциялары бұрынғы кодпен бірдей...)
+async def send_media(message: types.Message, m_type: str):
+    user_id = message.from_user.id
+    async with aiosqlite.connect("bot_main_v3.db") as db:
+        res = await (await db.execute("SELECT balance, last_video_id, last_photo_id FROM users WHERE user_id = ?", (user_id,))).fetchone()
+        if not res: return
+        balance, last_v, last_p = res
+        last_id = last_v if m_type == "video" else last_p
+        if balance < 5.0:
+            return await message.answer(f"💰 Баланс: {balance}$\n❌ Көру үшін 5$ керек.\n🔗 Шақыру: https://t.me/{BOT_USERNAME}?start={user_id}")
+        media = await (await db.execute("SELECT id, file_id FROM content WHERE file_type = ? AND is_approved = 1 AND id > ? ORDER BY id ASC LIMIT 1", (m_type, last_id))).fetchone()
+        if not media:
+            media = await (await db.execute("SELECT id, file_id FROM content WHERE file_type = ? AND is_approved = 1 ORDER BY id ASC LIMIT 1", (m_type,))).fetchone()
+        if not media: return await message.answer("😔 Контент жоқ.")
+        await db.execute(f"UPDATE users SET balance = balance - 5.0, {'last_video_id' if m_type == 'video' else 'last_photo_id'} = ? WHERE user_id = ?", (media[0], user_id))
+        await db.commit()
+        try:
+            caption = "⚠️ 2 сағаттан кейін жойылады!"
+            sent = await bot.send_video(user_id, media[1], caption=caption, protect_content=True) if m_type == "video" else await bot.send_photo(user_id, media[1], caption=caption, protect_content=True)
+            asyncio.create_task(delete_message_after_delay(user_id, sent.message_id))
+        except: pass
 
 async def show_approval(message):
     async with aiosqlite.connect("bot_main_v3.db") as db:
         item = await (await db.execute("SELECT id, file_id, file_type FROM content WHERE is_approved = 0 LIMIT 1")).fetchone()
-        if not item: return await message.answer("📭 Контент жоқ.")
-        ikb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Рұқсат", callback_data=f"ap_{item[0]}"), InlineKeyboardButton(text="❌ Жою", callback_data=f"rj_{item[0]}")]])
+        if not item: return await message.answer("📭 Бос.")
+        ikb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅", callback_data=f"ap_{item[0]}"), InlineKeyboardButton(text="❌", callback_data=f"rj_{item[0]}")]])
         if item[2] == "video": await bot.send_video(ADMIN_ID, item[1], reply_markup=ikb)
         else: await bot.send_photo(ADMIN_ID, item[1], reply_markup=ikb)
 
