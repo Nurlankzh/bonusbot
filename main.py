@@ -9,11 +9,11 @@ from aiogram.utils.deep_linking import create_start_link, decode_payload
 from aiogram.exceptions import TelegramForbiddenError
 
 # --- КОНФИГУРАЦИЯ ---
-TOKEN = "8244608313:AAE40OlPa3x06gcplFzDPTF-h4RATJjkczM"
+TOKEN = "8576637032:AAEF5DhrNNUkRKoEtJ0Qg3D0q7v5_Zhp-hw"
 ADMIN_ID = 6303091468
 MANAGER_USER = "@QAZAQSHACONTENT18"
-BOT_USERNAME = "Qozunet_bot"
-TARGET_CHANNEL = "@uyatsizoqiga" # Тіркелу қажет канал
+BOT_USERNAME = "@qozu_bot"
+TARGET_CHANNEL = "@videoskazak" # Тіркелу қажет канал
 CHANNEL_URL = "https://t.me/uyatsizoqiga"
 
 logging.basicConfig(level=logging.INFO)
