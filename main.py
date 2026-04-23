@@ -15,7 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 # ================= CONFIG =================
-TOKEN = "PASTE_TOKEN_HERE"
+TOKEN = "5773099087:AAFZcdfKnodG3qnFMH9yAmxCZSFDSt8Btig"
 ADMIN_ID = 6303091468
 CHANNEL = "@chatsdostat"
 BOT_USERNAME = "Tapellotanbot"
