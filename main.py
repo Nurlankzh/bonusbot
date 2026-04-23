@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
-# ================= CONFIG =================
+# ========= CONFIG =========
 TOKEN = "5773099087:AAFZcdfKnodG3qnFMH9yAmxCZSFDSt8Btig"
 ADMIN_ID = 6303091468
 CHANNEL = "@chatsdostat"
@@ -19,98 +19,191 @@ CHANNEL = "@chatsdostat"
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ================= STATES =================
-class AdminState(StatesGroup):
+# ========= STATES =========
+class States(StatesGroup):
+    lang = State()
     broadcast = State()
     add_content = State()
 
-# ================= DB =================
-class DB:
-    def __init__(self):
-        self.conn = None
-
-    async def connect(self):
-        self.conn = await aiosqlite.connect("bot.db")
-        self.conn.row_factory = aiosqlite.Row
-        await self.conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY,
-            lang TEXT DEFAULT 'kk',
-            diamonds INTEGER DEFAULT 10,
-            referrals INTEGER DEFAULT 0,
-            vip INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS content(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id TEXT,
-            type TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS progress(
-            uid INTEGER,
-            cid INTEGER
-        );
-        """)
-        await self.conn.commit()
-
-db = DB()
-
-# ================= TEXT =================
+# ========= TEXT =========
 TEXT = {
-    "kk": {"start": "🔥 Қош келдіңіз", "no_d": "❌ Алмас жоқ"},
-    "ru": {"start": "🔥 Добро пожаловать", "no_d": "❌ Нет алмазов"},
-    "en": {"start": "🔥 Welcome", "no_d": "❌ No diamonds"},
+    "kk": {
+        "choose": "🌍 Тілді таңдаңыз",
+        "start": "🔥 Қош келдіңіз!",
+        "sub": "❌ Каналға тіркеліңіз!",
+        "photo": "📸 Фото",
+        "video": "🎥 Видео",
+        "profile": "👤 Профиль",
+        "admin": "⚙️ Админ",
+        "no_d": "❌ Алмас жоқ",
+    },
+    "ru": {
+        "choose": "🌍 Выберите язык",
+        "start": "🔥 Добро пожаловать!",
+        "sub": "❌ Подпишитесь на канал!",
+        "photo": "📸 Фото",
+        "video": "🎥 Видео",
+        "profile": "👤 Профиль",
+        "admin": "⚙️ Админ",
+        "no_d": "❌ Нет алмазов",
+    },
+    "en": {
+        "choose": "🌍 Choose language",
+        "start": "🔥 Welcome!",
+        "sub": "❌ Subscribe to channel!",
+        "photo": "📸 Photo",
+        "video": "🎥 Video",
+        "profile": "👤 Profile",
+        "admin": "⚙️ Admin",
+        "no_d": "❌ No diamonds",
+    }
 }
 
-# ================= HELPERS =================
-async def get_user(uid):
-    cur = await db.conn.execute("SELECT * FROM users WHERE id=?", (uid,))
-    return await cur.fetchone()
+# ========= DB =========
+async def db():
+    conn = await aiosqlite.connect("bot.db")
+    conn.row_factory = aiosqlite.Row
 
-def kb(lang, uid):
-    t = TEXT[lang]
+    await conn.executescript("""
+    CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY,
+        lang TEXT,
+        diamonds INTEGER DEFAULT 10,
+        referrals INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS content(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id TEXT,
+        type TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS progress(
+        uid INTEGER,
+        cid INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS refs(
+        referrer INTEGER,
+        user INTEGER UNIQUE
+    );
+    """)
+    await conn.commit()
+    return conn
+
+# ========= KEYBOARDS =========
+def lang_kb():
     b = ReplyKeyboardBuilder()
-    b.row(KeyboardButton(text="📸 Фото"), KeyboardButton(text="🎥 Видео"))
-    b.row(KeyboardButton(text="👤 Профиль"))
-    if uid == ADMIN_ID:
-        b.row(KeyboardButton(text="⚙️ Admin"))
+    b.row(
+        KeyboardButton(text="Қазақша"),
+        KeyboardButton(text="Русский"),
+        KeyboardButton(text="English")
+    )
     return b.as_markup(resize_keyboard=True)
 
-# ================= START =================
+def main_kb(lang, uid):
+    t = TEXT[lang]
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text=t["photo"]), KeyboardButton(text=t["video"]))
+    b.row(KeyboardButton(text=t["profile"]))
+    if uid == ADMIN_ID:
+        b.row(KeyboardButton(text=t["admin"]))
+    return b.as_markup(resize_keyboard=True)
+
+def admin_kb():
+    b = ReplyKeyboardBuilder()
+    b.row(KeyboardButton(text="📢 Рассылка"))
+    b.row(KeyboardButton(text="➕ Контент"))
+    b.row(KeyboardButton(text="🏠 Мәзір"))
+    return b.as_markup(resize_keyboard=True)
+
+# ========= HELPERS =========
+async def get_user(conn, uid):
+    cur = await conn.execute("SELECT * FROM users WHERE id=?", (uid,))
+    return await cur.fetchone()
+
+async def check_sub(uid):
+    try:
+        m = await bot.get_chat_member(CHANNEL, uid)
+        return m.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+# ========= START =========
 @dp.message(CommandStart())
-async def start(m: Message, command: CommandObject):
+async def start(m: Message, state: FSMContext, command: CommandObject):
+    await state.update_data(ref=command.args)
+    await m.answer("🌍 Тілді таңдаңыз", reply_markup=lang_kb())
+    await state.set_state(States.lang)
+
+# ========= LANGUAGE =========
+@dp.message(States.lang)
+async def set_lang(m: Message, state: FSMContext):
+    lang_map = {
+        "Қазақша": "kk",
+        "Русский": "ru",
+        "English": "en"
+    }
+
+    if m.text not in lang_map:
+        return
+
+    lang = lang_map[m.text]
     uid = m.from_user.id
 
-    await db.conn.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (uid,))
+    conn = await db()
 
-    # referral
-    if command.args and command.args.isdigit():
-        ref = int(command.args)
+    data = await state.get_data()
+    ref = data.get("ref")
+
+    await conn.execute(
+        "INSERT OR IGNORE INTO users(id, lang) VALUES(?,?)",
+        (uid, lang)
+    )
+
+    # ===== REFERRAL =====
+    if ref and ref.isdigit():
+        ref = int(ref)
         if ref != uid:
-            await db.conn.execute(
-                "UPDATE users SET diamonds = diamonds + 5, referrals = referrals + 1 WHERE id=?",
-                (ref,)
-            )
+            try:
+                await conn.execute(
+                    "INSERT INTO refs(referrer,user) VALUES(?,?)",
+                    (ref, uid)
+                )
 
-    await db.conn.commit()
+                await conn.execute(
+                    "UPDATE users SET diamonds=diamonds+5, referrals=referrals+1 WHERE id=?",
+                    (ref,)
+                )
 
-    user = await get_user(uid)
+                await bot.send_message(ref, "🎁 +5 💎 реферал!")
 
-    await m.answer(TEXT[user["lang"]]["start"], reply_markup=kb(user["lang"], uid))
+            except:
+                pass
 
-# ================= CONTENT =================
-@dp.message(F.text.in_(["📸 Фото", "🎥 Видео"]))
+    await conn.commit()
+
+    await m.answer(TEXT[lang]["start"], reply_markup=main_kb(lang, uid))
+    await state.clear()
+
+# ========= CONTENT =========
+@dp.message(F.text.contains("Фото") | F.text.contains("Video") | F.text.contains("Видео") | F.text.contains("Photo"))
 async def content(m: Message):
+    conn = await db()
     uid = m.from_user.id
-    user = await get_user(uid)
 
-    ctype = "photo" if "Фото" in m.text else "video"
+    user = await get_user(conn, uid)
+    lang = user["lang"]
+
+    if not await check_sub(uid):
+        return await m.answer(TEXT[lang]["sub"])
 
     if user["diamonds"] <= 0:
-        return await m.answer(TEXT[user["lang"]]["no_d"])
+        return await m.answer(TEXT[lang]["no_d"])
 
-    cur = await db.conn.execute("""
+    ctype = "photo" if "Фото" in m.text or "Photo" in m.text else "video"
+
+    cur = await conn.execute("""
         SELECT * FROM content
         WHERE type=?
         AND id NOT IN (SELECT cid FROM progress WHERE uid=?)
@@ -120,40 +213,70 @@ async def content(m: Message):
     item = await cur.fetchone()
 
     if not item:
-        return await m.answer("🏁 Бітті")
+        return await m.answer("🏁 Контент бітті")
 
     if ctype == "photo":
         await m.answer_photo(item["file_id"])
     else:
         await m.answer_video(item["file_id"])
 
-    await db.conn.execute("INSERT INTO progress VALUES(?,?)", (uid, item["id"]))
-    await db.conn.execute("UPDATE users SET diamonds = diamonds - 1 WHERE id=?", (uid,))
-    await db.conn.commit()
+    await conn.execute("INSERT INTO progress VALUES(?,?)", (uid, item["id"]))
+    await conn.execute("UPDATE users SET diamonds=diamonds-1 WHERE id=?", (uid,))
+    await conn.commit()
 
-# ================= PROFILE =================
-@dp.message(F.text == "👤 Профиль")
+# ========= PROFILE =========
+@dp.message(F.text.contains("Профиль") | F.text.contains("Profile"))
 async def profile(m: Message):
-    user = await get_user(m.from_user.id)
+    conn = await db()
+    user = await get_user(conn, m.from_user.id)
+
+    link = f"https://t.me/YOUR_BOT?start={user['id']}"
 
     await m.answer(
-        f"👤 ID: {user['id']}\n💎 {user['diamonds']}\n👥 {user['referrals']}\n🌍 {user['lang']}"
+        f"👤 ID: {user['id']}\n💎 {user['diamonds']}\n👥 {user['referrals']}\n🔗 {link}"
     )
 
-# ================= ADMIN =================
-@dp.message(F.text == "⚙️ Admin", F.from_user.id == ADMIN_ID)
+# ========= ADMIN =========
+@dp.message(F.text.contains("Админ") | F.text.contains("Admin"), F.from_user.id == ADMIN_ID)
 async def admin(m: Message):
-    await m.answer("📢 /broadcast\n➕ /add\n📊 /stats")
+    await m.answer("⚙️ Панель", reply_markup=admin_kb())
 
-# ================= BROADCAST =================
-@dp.message(F.text == "/broadcast", F.from_user.id == ADMIN_ID)
-async def bc(m: Message, state: FSMContext):
-    await m.answer("Жібер хабарламаны")
-    await state.set_state(AdminState.broadcast)
+# ========= ADD CONTENT =========
+@dp.message(F.text == "➕ Контент", F.from_user.id == ADMIN_ID)
+async def add(m: Message, state: FSMContext):
+    await m.answer("Жібер фото/видео")
+    await state.set_state(States.add_content)
 
-@dp.message(AdminState.broadcast)
+@dp.message(States.add_content)
+async def save(m: Message, state: FSMContext):
+    conn = await db()
+
+    if m.photo:
+        fid = m.photo[-1].file_id
+        t = "photo"
+    elif m.video:
+        fid = m.video.file_id
+        t = "video"
+    else:
+        return
+
+    await conn.execute("INSERT INTO content(file_id,type) VALUES(?,?)", (fid, t))
+    await conn.commit()
+
+    await m.answer("✅ Сақталды")
+    await state.clear()
+
+# ========= BROADCAST =========
+@dp.message(F.text == "📢 Рассылка", F.from_user.id == ADMIN_ID)
+async def bc_start(m: Message, state: FSMContext):
+    await m.answer("Жібер хабар")
+    await state.set_state(States.broadcast)
+
+@dp.message(States.broadcast)
 async def bc_send(m: Message, state: FSMContext):
-    users = await db.conn.execute("SELECT id FROM users")
+    conn = await db()
+
+    users = await conn.execute("SELECT id FROM users")
     users = await users.fetchall()
 
     for u in users:
@@ -165,30 +288,15 @@ async def bc_send(m: Message, state: FSMContext):
     await m.answer("✅ Жіберілді")
     await state.clear()
 
-# ================= ADD CONTENT =================
-@dp.message(F.text == "/add", F.from_user.id == ADMIN_ID)
-async def add(m: Message, state: FSMContext):
-    await m.answer("Фото/видео жібер")
-    await state.set_state(AdminState.add_content)
+# ========= HOME =========
+@dp.message(F.text == "🏠 Мәзір")
+async def home(m: Message):
+    conn = await db()
+    user = await get_user(conn, m.from_user.id)
+    await m.answer("🏠", reply_markup=main_kb(user["lang"], user["id"]))
 
-@dp.message(AdminState.add_content)
-async def save(m: Message, state: FSMContext):
-    if m.photo:
-        fid = m.photo[-1].file_id
-        t = "photo"
-    else:
-        fid = m.video.file_id
-        t = "video"
-
-    await db.conn.execute("INSERT INTO content(file_id,type) VALUES(?,?)", (fid, t))
-    await db.conn.commit()
-
-    await m.answer("Сақталды")
-    await state.clear()
-
-# ================= RUN =================
+# ========= RUN =========
 async def main():
-    await db.connect()
     logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
 
