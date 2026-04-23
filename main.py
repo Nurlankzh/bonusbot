@@ -15,7 +15,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 TOKEN = "5773099087:AAFZcdfKnodG3qnFMH9yAmxCZSFDSt8Btig"
 ADMIN_ID = 6303091468
 CHANNEL = "@chatsdostat"
-BOT_USERNAME = "@Tapellotanbot"
+BOT_USERNAME = "Tapellotanbot"
 
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
