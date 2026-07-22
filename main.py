@@ -148,6 +148,12 @@ async def check_subscription_callback(c: types.CallbackQuery):
     else:
         await c.answer("❌ Каналға тіркелмедіңіз!", show_alert=True)
 
+# --- БОС ҚАЛҒАН КНОПКА ФУНКЦИЯСЫ ---
+@dp.callback_query_handler(lambda c: c.data == "ignore")
+async def ignore_callback(c: types.CallbackQuery):
+    # Сағат айналып тұрып қалмауы үшін жауап қайтару
+    await c.answer("Жақсы қараңыз! 🍿")
+
 # --- ADMIN: BULK ADD VIDEO ---
 @dp.message_handler(lambda m: m.text == "➕ Видео қосу", user_id=ADMIN_ID)
 async def add_v_start(m: types.Message):
@@ -171,7 +177,6 @@ async def add_v_file_save(m: types.Message, state: FSMContext):
     uid = m.video.file_unique_id
     
     async with aiosqlite.connect(DB) as db:
-        # Дубликат тексеру
         exists = await (await db.execute("SELECT id FROM content WHERE file_unique_id=?", (uid,))).fetchone()
         if exists:
             await state.update_data(dupes=data.get('dupes', 0) + 1)
@@ -208,7 +213,6 @@ async def user_up_file(m: types.Message, state: FSMContext):
     uid = m.video.file_unique_id
     
     async with aiosqlite.connect(DB) as db:
-        # Базада немесе кезекте бар-жоғын тексеру
         c1 = await (await db.execute("SELECT id FROM content WHERE file_unique_id=?", (uid,))).fetchone()
         c2 = await (await db.execute("SELECT id FROM submissions WHERE file_unique_id=?", (uid,))).fetchone()
         
@@ -265,7 +269,7 @@ async def sub_decision(c: types.CallbackQuery):
     await c.message.delete()
     await c.answer("Орындалды")
 
-# --- ADMIN: BROADCAST (ANTI-BAN) ---
+# --- ADMIN: BROADCAST ---
 @dp.message_handler(lambda m: m.text == "📢 Рассылка", user_id=ADMIN_ID)
 async def adm_broadcast_start(m: types.Message):
     await AdminStates.broadcast_msg.set()
@@ -282,13 +286,12 @@ async def adm_broadcast_process(m: types.Message, state: FSMContext):
         try:
             await m.copy_to(u[0])
             count += 1
-            await asyncio.sleep(0.05) # Лимиттен аспау үшін
+            await asyncio.sleep(0.05)
         except RetryAfter as e:
             await asyncio.sleep(e.timeout)
             try: await m.copy_to(u[0])
             except: pass
         except (BotBlocked, UserDeactivated):
-            # Қалауыңызша мұнда блокқа салған адамдарды базадан өшіру логикасын қосуға болады
             pass
         except TelegramAPIError:
             pass
@@ -354,7 +357,7 @@ async def vip_access(m: types.Message):
     
     if is_vip:
         kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
-        kb.add("😈 VIP видео 😈", "🔙 Артқа")
+        kb.add("😈 VIP видео", "🔙 Артқа")
         await m.answer(f"😈 <b>VIP МӘЗІР</b>\n\nСіздің VIP рұқсатыңыз белсенді!\nМерзімі: {user[1]} дейін.\n\n"
                        f"Бұл бөлімдегі видеоларды көру: 22 монета.", reply_markup=kb)
     else:
@@ -385,9 +388,9 @@ async def buy_vip_callback(c: types.CallbackQuery):
     await bot.send_message(uid, "✅ VIP рұқсат алынды! 24 сағатқа есік ашылды.", reply_markup=main_kb(uid))
 
 # --- CONTENT SHOW ---
-@dp.message_handler(lambda m: m.text in ["🎬 Контент", "😈 VIP видео 😈"])
+@dp.message_handler(lambda m: m.text in ["🎬 Контент", "😈 VIP видео"])
 async def content_menu(m: types.Message):
-    if m.text == "😈 VIP видео 😈":
+    if m.text == "😈 VIP видео":
         m.text = "😈 VIP Видео"
         return await get_video(m)
         
@@ -480,7 +483,7 @@ async def clean_chat(m: types.Message, state: FSMContext):
     curr_state = await state.get_state()
     if curr_state is not None: return
     
-    buttons = ["🎬 Контент", "➕ Видео жіберу", "💰 Баланс", "👥 Реферал", "💎 Монета сатып алу", "⚙️ Админ", "🔐 VIP контент", "🔙 Артқа", "😈 VIP видео 😈", "✅ Аяқтау"]
+    buttons = ["🎬 Контент", "➕ Видео жіберу", "💰 Баланс", "👥 Реферал", "💎 Монета сатып алу", "⚙️ Админ", "🔐 VIP контент", "🔙 Артқа", "😈 VIP видео", "✅ Аяқтау"]
     if m.text not in buttons and not m.text.startswith('/'):
         try: await m.delete()
         except: pass
@@ -490,17 +493,20 @@ async def scheduler():
     while True:
         await asyncio.sleep(60)
         now = datetime.now()
-        async with aiosqlite.connect(DB) as db:
-            async with db.execute("SELECT id, last_bonus FROM users") as cur:
-                async for row in cur:
-                    uid, l_bonus = row
-                    lb_dt = datetime.strptime(l_bonus, "%Y-%m-%d %H:%M")
-                    if now - lb_dt >= timedelta(hours=24):
-                        await db.execute("UPDATE users SET balance = balance + 3, last_bonus = ? WHERE id = ?", 
-                                         (now.strftime("%Y-%m-%d %H:%M"), uid))
-                        try: await bot.send_message(uid, "🎁 Күнделікті бонус: +3 монета берілді!")
-                        except: pass
-            await db.commit()
+        try:
+            async with aiosqlite.connect(DB) as db:
+                async with db.execute("SELECT id, last_bonus FROM users") as cur:
+                    async for row in cur:
+                        uid, l_bonus = row
+                        lb_dt = datetime.strptime(l_bonus, "%Y-%m-%d %H:%M")
+                        if now - lb_dt >= timedelta(hours=24):
+                            await db.execute("UPDATE users SET balance = balance + 3, last_bonus = ? WHERE id = ?", 
+                                             (now.strftime("%Y-%m-%d %H:%M"), uid))
+                            try: await bot.send_message(uid, "🎁 Күнделікті бонус: +3 монета берілді!")
+                            except: pass
+                await db.commit()
+        except Exception as e:
+            logging.error(f"Scheduler error: {e}")
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
