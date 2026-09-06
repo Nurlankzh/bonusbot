@@ -5,9 +5,13 @@ from datetime import datetime
 
 # Railway Volume орнатылса, деректер сол жақта сақталады
 DB_NAME = os.getenv("DB_PATH", "bot_builder.db")
+DATA_DIR = os.path.dirname(DB_NAME) if os.path.dirname(DB_NAME) else "."
 
 async def init_db():
     """Деректер базасының кестелерін құру"""
+    if DATA_DIR != ".":
+        os.makedirs(DATA_DIR, exist_ok=True)
+        
     async with aiosqlite.connect(DB_NAME) as db:
         # 1. Боттар кестесі
         await db.execute('''
