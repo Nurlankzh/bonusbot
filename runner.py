@@ -1,106 +1,300 @@
 import asyncio
-import sys
 import os
-from aiogram import Bot
+import sys
+
+import config
 import database as db
 
-class BotRunnerManager:
+
+class RunnerManager:
     def __init__(self):
-        self.active_processes: dict[int, asyncio.subprocess.Process] = {}
-        self.tasks: dict[int, list[asyncio.Task]] = {}
+        self.processes = {}
+        self.locks = {}
 
-    async def start_sub_bot(self, bot_db_id: int, chat_id: int, master_bot: Bot):
-        if bot_db_id in self.active_processes:
-            await master_bot.send_message(chat_id, "⚠️ Бұл процесс қазірдің өзінде қосулы тұр!")
-            return
+    def get_lock(self, bot_id):
+        if bot_id not in self.locks:
+            self.locks[bot_id] = asyncio.Lock()
+        return self.locks[bot_id]
 
-        bot_data = await db.get_bot(bot_db_id)
-        code_data = await db.get_latest_code(bot_db_id)
-        env_vars = await db.get_env_vars(bot_db_id)
+    def workspace(self, bot_id):
+        path = os.path.join(
+            config.WORKSPACE_DIR,
+            str(bot_id)
+        )
+        os.makedirs(path, exist_ok=True)
+        return path
 
-        if not code_data:
-            await master_bot.send_message(chat_id, "❌ Ботта іске қосатын код жоқ. Алдымен код жүктеңіз.")
-            return
+    async def start_sub_bot(self, bot_id, chat_id, master_bot):
+        async with self.get_lock(bot_id):
 
-        os.makedirs("user_bots", exist_ok=True)
-        script_path = os.path.join("user_bots", f"bot_{bot_db_id}.py")
+            if bot_id in self.processes:
+                process = self.processes[bot_id]
 
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(code_data['code'])
+                if process.returncode is None:
+                    await master_bot.send_message(
+                        chat_id,
+                        "🟢 Бот қазірдің өзінде қосулы."
+                    )
+                    return
 
-        # Айнымалыларды оқшауланған ортаға (Environment) қосу
-        env = os.environ.copy()
-        env.update(env_vars)
+            bot_data = await db.get_bot(bot_id)
 
+            if not bot_data:
+                await master_bot.send_message(
+                    chat_id,
+                    "❌ Жоба табылмады."
+                )
+                return
+
+            code_data = await db.get_latest_code(bot_id)
+
+            if not code_data:
+                await master_bot.send_message(
+                    chat_id,
+                    "❌ Deploy жасау үшін алдымен код қосыңыз."
+                )
+                return
+
+            workspace = self.workspace(bot_id)
+            main_file = os.path.join(workspace, "main.py")
+
+            with open(main_file, "w", encoding="utf-8") as f:
+                f.write(code_data["code"])
+
+            variables = await db.get_env_vars(bot_id)
+
+            env = os.environ.copy()
+
+            for key, value in variables.items():
+                env[key] = value
+
+            env["BOT_ID"] = str(bot_id)
+
+            await db.update_bot_status(bot_id, "starting")
+
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-u",
+                    main_file,
+                    cwd=workspace,
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT
+                )
+
+                self.processes[bot_id] = process
+
+                await db.update_bot_status(bot_id, "running")
+
+                await db.add_log(
+                    bot_id,
+                    "INFO",
+                    f"Process started: PID={process.pid}"
+                )
+
+                await master_bot.send_message(
+                    chat_id,
+                    f"🟢 Бот іске қосылды.\nPID: `{process.pid}`",
+                    parse_mode="Markdown"
+                )
+
+                asyncio.create_task(
+                    self.watch_process(
+                        bot_id,
+                        process,
+                        chat_id,
+                        master_bot
+                    )
+                )
+
+            except Exception as e:
+                await db.update_bot_status(bot_id, "crashed")
+
+                await db.add_log(
+                    bot_id,
+                    "ERROR",
+                    repr(e)
+                )
+
+                await master_bot.send_message(
+                    chat_id,
+                    f"❌ Іске қосу қатесі:\n`{str(e)[:1500]}`",
+                    parse_mode="Markdown"
+                )
+
+    async def watch_process(
+        self,
+        bot_id,
+        process,
+        chat_id,
+        master_bot
+    ):
         try:
-            process = await asyncio.create_subprocess_exec(
-                sys.executable, script_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env
+            while True:
+                line = await process.stdout.readline()
+
+                if not line:
+                    break
+
+                text = line.decode(
+                    "utf-8",
+                    errors="replace"
+                ).rstrip()
+
+                if text:
+                    await db.add_log(
+                        bot_id,
+                        "OUTPUT",
+                        text[:4000]
+                    )
+
+            return_code = await process.wait()
+
+            self.processes.pop(bot_id, None)
+
+            if return_code == 0:
+                status = "stopped"
+            else:
+                status = "crashed"
+
+            await db.update_bot_status(
+                bot_id,
+                status
             )
-            self.active_processes[bot_db_id] = process
-            await db.update_bot_status(bot_db_id, "running")
-            await db.add_log(bot_db_id, "INFO", "Бот сәтті іске қосылды.")
 
-            msg = await master_bot.send_message(chat_id, f"🚀 **Бот іске қосылды!**\n🆔 Сервис: `{bot_data['bot_id_name']}`\n📌 Нұсқа: `v{code_data['version']}`", parse_mode="Markdown")
+            await db.add_log(
+                bot_id,
+                "INFO" if return_code == 0 else "ERROR",
+                f"Process exited with code {return_code}"
+            )
 
-            task_out = asyncio.create_task(self._read_stream(bot_db_id, process.stdout, "STDOUT", chat_id, master_bot))
-            task_err = asyncio.create_task(self._read_stream(bot_db_id, process.stderr, "STDERR", chat_id, master_bot))
-            task_monitor = asyncio.create_task(self._monitor_crash(bot_db_id, chat_id, master_bot))
-            self.tasks[bot_db_id] = [task_out, task_err, task_monitor]
+            bot_data = await db.get_bot(bot_id)
+
+            if (
+                bot_data
+                and bot_data["auto_restart"]
+                and return_code != 0
+            ):
+                await db.add_log(
+                    bot_id,
+                    "WARNING",
+                    "Auto restart scheduled"
+                )
+
+                await asyncio.sleep(5)
+
+                await self.start_sub_bot(
+                    bot_id,
+                    chat_id,
+                    master_bot
+                )
+            else:
+                await master_bot.send_message(
+                    chat_id,
+                    f"ℹ️ Бот тоқтады.\nExit code: `{return_code}`",
+                    parse_mode="Markdown"
+                )
 
         except Exception as e:
-            await master_bot.send_message(chat_id, f"🚨 **Жүйелік қате:**\n`{str(e)}`", parse_mode="Markdown")
+            await db.update_bot_status(
+                bot_id,
+                "crashed"
+            )
 
-    async def stop_sub_bot(self, bot_db_id: int, chat_id: int, master_bot: Bot):
-        if bot_db_id in self.active_processes:
-            process = self.active_processes[bot_db_id]
+            await db.add_log(
+                bot_id,
+                "ERROR",
+                repr(e)
+            )
+
+    async def stop_sub_bot(
+        self,
+        bot_id,
+        chat_id,
+        master_bot
+    ):
+        async with self.get_lock(bot_id):
+
+            process = self.processes.get(bot_id)
+
+            if not process:
+                await db.update_bot_status(
+                    bot_id,
+                    "stopped"
+                )
+
+                await master_bot.send_message(
+                    chat_id,
+                    "🔴 Бот қазір қосулы емес."
+                )
+                return
+
             try:
                 process.terminate()
-                await process.wait()
-            except Exception:
-                pass
-            del self.active_processes[bot_db_id]
 
-            if bot_db_id in self.tasks:
-                for t in self.tasks[bot_db_id]:
-                    t.cancel()
-                del self.tasks[bot_db_id]
+                try:
+                    await asyncio.wait_for(
+                        process.wait(),
+                        timeout=5
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
 
-            await db.update_bot_status(bot_db_id, "stopped")
-            await db.add_log(bot_db_id, "INFO", "Бот тоқтатылды.")
-            await master_bot.send_message(chat_id, f"🛑 **Бот тоқтатылды.** (ID: {bot_db_id})", parse_mode="Markdown")
-        else:
-            await master_bot.send_message(chat_id, "ℹ️ Бұл бот қосылмаған.")
+                self.processes.pop(
+                    bot_id,
+                    None
+                )
 
-    async def _monitor_crash(self, bot_db_id: int, chat_id: int, master_bot: Bot):
-        """Боттың құлағанын бақылау және хабарлау (Crash Recovery)"""
-        process = self.active_processes.get(bot_db_id)
-        if not process: return
-        await process.wait()
-        
-        if bot_db_id in self.active_processes:
-            del self.active_processes[bot_db_id]
-            await db.update_bot_status(bot_db_id, "crashed")
-            await master_bot.send_message(chat_id, f"💥 **CRASH АНЫҚТАЛДЫ!**\nСервис (ID: {bot_db_id}) жұмысын тоқтатты. Логтарды тексеріңіз.", parse_mode="Markdown")
+                await db.update_bot_status(
+                    bot_id,
+                    "stopped"
+                )
 
-    async def _read_stream(self, bot_db_id: int, stream, stream_type: str, chat_id: int, master_bot: Bot):
-        """Логтарды оқу. Егер қате болса, Телеграмға жіберу"""
-        buffer = []
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            text = line.decode('utf-8', errors='replace').strip()
-            if text:
-                buffer.append(text)
-                if stream_type == "STDERR" or "Traceback" in text or "Exception" in text:
-                    full_error = "\n".join(buffer[-15:])
-                    await db.add_log(bot_db_id, "ERROR", full_error)
-                    try:
-                        await master_bot.send_message(chat_id, f"⚠️ **ҚАТЕ (LOGS):**\n```python\n{full_error[:3500]}\n```", parse_mode="Markdown")
-                    except: pass
-                    buffer.clear()
+                await db.add_log(
+                    bot_id,
+                    "INFO",
+                    "Process manually stopped"
+                )
 
-runner_manager = BotRunnerManager()
+                await master_bot.send_message(
+                    chat_id,
+                    "🔴 Бот тоқтатылды."
+                )
+
+            except Exception as e:
+                await db.add_log(
+                    bot_id,
+                    "ERROR",
+                    repr(e)
+                )
+
+                await master_bot.send_message(
+                    chat_id,
+                    f"❌ Stop қатесі: `{str(e)[:1000]}`",
+                    parse_mode="Markdown"
+                )
+
+    async def restart_sub_bot(
+        self,
+        bot_id,
+        chat_id,
+        master_bot
+    ):
+        await self.stop_sub_bot(
+            bot_id,
+            chat_id,
+            master_bot
+        )
+
+        await asyncio.sleep(1)
+
+        await self.start_sub_bot(
+            bot_id,
+            chat_id,
+            master_bot
+        )
+
+
+runner_manager = RunnerManager()
