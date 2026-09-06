@@ -1,1160 +1,1217 @@
 import asyncio
-import html
 import logging
-import os
-import psutil
 
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import CommandStart
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import (
+    Bot,
+    Dispatcher,
+    F,
+    types
+)
+
+from aiogram.filters import (
+    CommandStart
+)
+
+from aiogram.fsm.context import (
+    FSMContext
+)
+
+from aiogram.fsm.state import (
+    State,
+    StatesGroup
+)
+
+from aiogram.fsm.storage.memory import (
+    MemoryStorage
+)
+
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
+
+from aiogram.exceptions import (
+    TelegramBadRequest
+)
 
 import config
-import database as db
-from analyzer import analyze_code
+import database
 from runner import runner_manager
 
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format=(
+        "%(asctime)s | "
+        "%(levelname)s | "
+        "%(message)s"
+    )
 )
 
 
-bot = Bot(token=config.BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+bot = Bot(
+    token=config.BOT_TOKEN
+)
 
 
-class AddBotStates(StatesGroup):
-    waiting_name = State()
-    waiting_token = State()
+dp = Dispatcher(
+    storage=MemoryStorage()
+)
 
 
-class CodeStates(StatesGroup):
-    waiting_code = State()
-    waiting_restore = State()
+class AddBotStates(
+    StatesGroup
+):
+
+    waiting_for_name = State()
+
+    waiting_for_token = State()
 
 
-class VarStates(StatesGroup):
-    waiting_key = State()
-    waiting_value = State()
+class CodeStates(
+    StatesGroup
+):
+
+    waiting_for_code = State()
+
+
+class VarStates(
+    StatesGroup
+):
+
+    waiting_for_key = State()
+
+    waiting_for_value = State()
 
 
 def main_menu():
+
     return InlineKeyboardMarkup(
+
         inline_keyboard=[
+
             [
+
                 InlineKeyboardButton(
-                    text="➕ Жаңа жоба",
+
+                    text="➕ Жаңа бот қосу",
+
                     callback_data="add_bot"
+
                 )
+
             ],
+
             [
+
                 InlineKeyboardButton(
-                    text="📋 Жобалар",
+
+                    text="📋 Боттар тізімі",
+
                     callback_data="list_bots"
+
                 )
+
             ]
+
         ]
+
     )
 
 
-def project_menu(bot_id):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚀 Deployments",
-                    callback_data=f"deploy:{bot_id}"
-                ),
-                InlineKeyboardButton(
-                    text="🔐 Variables",
-                    callback_data=f"vars:{bot_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📊 Metrics",
-                    callback_data=f"metrics:{bot_id}"
-                ),
-                InlineKeyboardButton(
-                    text="💻 Logs",
-                    callback_data=f"logs:{bot_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⚙️ Settings",
-                    callback_data=f"settings:{bot_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Басты мәзір",
-                    callback_data="main_menu"
-                )
-            ]
-        ]
-    )
+def manage_menu(
+    bot_id
+):
 
-
-def deployment_menu(bot_id):
     return InlineKeyboardMarkup(
+
         inline_keyboard=[
+
             [
+
                 InlineKeyboardButton(
-                    text="🚀 Run",
-                    callback_data=f"run:{bot_id}"
+
+                    text="🚀 Start",
+
+                    callback_data=(
+                        f"start_{bot_id}"
+                    )
+
                 ),
+
                 InlineKeyboardButton(
+
                     text="🛑 Stop",
-                    callback_data=f"stop:{bot_id}"
+
+                    callback_data=(
+                        f"stop_{bot_id}"
+                    )
+
                 )
+
             ],
+
             [
+
                 InlineKeyboardButton(
-                    text="🔄 Restart",
-                    callback_data=f"restart:{bot_id}"
+
+                    text="📝 Код",
+
+                    callback_data=(
+                        f"code_{bot_id}"
+                    )
+
                 )
+
             ],
+
             [
+
                 InlineKeyboardButton(
-                    text="📝 Код Deploy",
-                    callback_data=f"code:{bot_id}"
+
+                    text="🔐 Variables",
+
+                    callback_data=(
+                        f"vars_{bot_id}"
+                    )
+
                 )
+
             ],
+
             [
+
                 InlineKeyboardButton(
-                    text="↩️ Rollback",
-                    callback_data=f"rollback:{bot_id}"
+
+                    text="📜 Logs",
+
+                    callback_data=(
+                        f"logs_{bot_id}"
+                    )
+
                 )
+
             ],
+
             [
+
                 InlineKeyboardButton(
-                    text="📜 Versions",
-                    callback_data=f"versions:{bot_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
+
                     text="⬅️ Артқа",
-                    callback_data=f"manage:{bot_id}"
+
+                    callback_data="list_bots"
+
                 )
+
             ]
+
         ]
+
     )
 
 
-def settings_menu(bot_id):
+def back_manage_menu(
+    bot_id
+):
+
     return InlineKeyboardMarkup(
+
         inline_keyboard=[
+
             [
+
                 InlineKeyboardButton(
-                    text="🔄 Auto Restart",
-                    callback_data=f"autorestart:{bot_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
+
                     text="⬅️ Артқа",
-                    callback_data=f"manage:{bot_id}"
+
+                    callback_data=(
+                        f"manage_{bot_id}"
+                    )
+
                 )
+
             ]
+
         ]
+
     )
 
 
-async def check_access(user_id):
-    return user_id == config.ADMIN_ID
+@dp.message()
+async def security_check(
+    message: types.Message
+):
 
+    if (
+        message.from_user.id
+        != config.ADMIN_ID
+    ):
 
-async def get_owned_bot(bot_id, user_id):
-    if not await check_access(user_id):
-        return None
+        await message.answer(
+            "⛔ Рұқсат жоқ."
+        )
 
-    bot_data = await db.get_bot(bot_id)
-
-    if not bot_data:
-        return None
-
-    if bot_data["owner_id"] != user_id:
-        return None
-
-    return bot_data
-
-
-@dp.message(CommandStart())
-async def start_cmd(message: types.Message):
-    if not await check_access(message.from_user.id):
-        await message.answer("⛔ Access Denied.")
         return
 
-    await message.answer(
-        "🛠 <b>Railway Bot Builder</b>\n\n"
-        "Telegram боттарыңызды осы жерден басқарыңыз.",
-        reply_markup=main_menu(),
-        parse_mode="HTML"
-    )
 
+@dp.callback_query()
+async def callback_security(
+    callback: types.CallbackQuery
+):
 
-@dp.callback_query(F.data == "main_menu")
-async def main_menu_callback(callback: types.CallbackQuery):
-    if not await check_access(callback.from_user.id):
+    if (
+        callback.from_user.id
+        != config.ADMIN_ID
+    ):
+
         await callback.answer(
-            "⛔ Access Denied.",
+            "⛔ Рұқсат жоқ.",
             show_alert=True
         )
+
         return
 
-    await callback.message.edit_text(
-        "🏠 <b>Басты мәзір</b>",
-        reply_markup=main_menu(),
-        parse_mode="HTML"
+
+@dp.message(
+    CommandStart()
+)
+async def start_command(
+    message: types.Message
+):
+
+    if (
+        message.from_user.id
+        != config.ADMIN_ID
+    ):
+
+        return
+
+
+    await message.answer(
+
+        "🛠 Бот Конструктор\n\n"
+        "Мұнда өз Telegram "
+        "боттарыңызды қосып, "
+        "кодын сақтап және "
+        "іске қоса аласыз.",
+
+        reply_markup=main_menu()
+
     )
 
-    await callback.answer()
+
+@dp.callback_query(
+    F.data == "main_menu"
+)
+async def back_main(
+    callback: types.CallbackQuery
+):
+
+    await safe_edit(
+
+        callback,
+
+        "🏠 Басты мәзір",
+
+        main_menu()
+
+    )
 
 
-@dp.callback_query(F.data == "add_bot")
-async def add_bot_start(
+@dp.callback_query(
+    F.data == "add_bot"
+)
+async def add_bot(
     callback: types.CallbackQuery,
     state: FSMContext
 ):
-    if not await check_access(callback.from_user.id):
-        await callback.answer(
-            "⛔ Access Denied.",
-            show_alert=True
-        )
-        return
 
     await state.set_state(
-        AddBotStates.waiting_name
+
+        AddBotStates.waiting_for_name
+
     )
 
+
     await callback.message.answer(
-        "✏️ Жобаның атауын жазыңыз:"
+
+        "✏️ Боттың атауын жазыңыз:"
+
     )
+
 
     await callback.answer()
 
 
-@dp.message(AddBotStates.waiting_name)
-async def add_bot_name(
+@dp.message(
+    AddBotStates.waiting_for_name
+)
+async def get_bot_name(
     message: types.Message,
     state: FSMContext
 ):
-    if not await check_access(message.from_user.id):
+
+    if not message.text:
+
         return
 
-    name = (message.text or "").strip()
 
-    if not name:
-        await message.answer(
-            "❌ Атау бос болмауы керек."
-        )
-        return
+    await state.update_data(
 
-    if len(name) > 100:
-        await message.answer(
-            "❌ Атау тым ұзын."
-        )
-        return
+        bot_name=message.text.strip()
 
-    await state.update_data(name=name)
+    )
+
 
     await state.set_state(
-        AddBotStates.waiting_token
+
+        AddBotStates.waiting_for_token
+
     )
+
 
     await message.answer(
-        "🔑 Child боттың token-ін жіберіңіз.\n\n"
-        "Token database ішінде сақталады және интерфейсте көрсетілмейді."
+
+        "🔑 Бот токенін жіберіңіз:"
+
     )
 
 
-@dp.message(AddBotStates.waiting_token)
-async def add_bot_token(
+@dp.message(
+    AddBotStates.waiting_for_token
+)
+async def get_bot_token(
     message: types.Message,
     state: FSMContext
 ):
-    if not await check_access(message.from_user.id):
+
+    if not message.text:
+
         return
 
-    token = (message.text or "").strip()
-
-    if len(token) < 20:
-        await message.answer(
-            "❌ Token дұрыс емес сияқты."
-        )
-        return
 
     data = await state.get_data()
 
-    bot_id = await db.add_bot(
+
+    bot_id = await database.add_bot(
+
         message.from_user.id,
-        data["name"],
-        token
+
+        data["bot_name"],
+
+        message.text.strip()
+
     )
+
 
     await state.clear()
 
+
     await message.answer(
-        f"✅ <b>Жоба құрылды!</b>\n\n"
-        f"ID: <code>{bot_id}</code>\n"
-        f"Атауы: <b>{html.escape(data['name'])}</b>",
-        reply_markup=main_menu(),
-        parse_mode="HTML"
+
+        f"✅ Бот қосылды!\n\n"
+        f"ID: {bot_id}",
+
+        reply_markup=main_menu()
+
     )
 
 
-@dp.callback_query(F.data == "list_bots")
+@dp.callback_query(
+    F.data == "list_bots"
+)
 async def list_bots(
     callback: types.CallbackQuery
 ):
-    if not await check_access(callback.from_user.id):
-        await callback.answer(
-            "⛔ Access Denied.",
-            show_alert=True
-        )
-        return
 
-    bots = await db.get_user_bots(
-        callback.from_user.id
+    bots = (
+        await database.get_user_bots(
+
+            callback.from_user.id
+
+        )
     )
+
 
     if not bots:
-        await callback.message.edit_text(
-            "📭 <b>Жобалар жоқ.</b>",
-            reply_markup=main_menu(),
-            parse_mode="HTML"
+
+        await safe_edit(
+
+            callback,
+
+            "📭 Боттар жоқ.",
+
+            main_menu()
+
         )
 
-        await callback.answer()
         return
 
-    buttons = []
+
+    keyboard = []
+
 
     for item in bots:
+
         status = item["status"]
 
-        icon = {
-            "running": "🟢",
-            "starting": "🟡",
-            "stopped": "🔴",
-            "crashed": "💥"
-        }.get(status, "⚪")
 
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"{icon} {item['bot_id_name']}",
-                callback_data=f"manage:{item['id']}"
-            )
-        ])
+        if status == "running":
 
-    buttons.append([
-        InlineKeyboardButton(
-            text="⬅️ Артқа",
-            callback_data="main_menu"
+            icon = "🟢"
+
+        elif status == "crashed":
+
+            icon = "💥"
+
+        else:
+
+            icon = "🔴"
+
+
+        keyboard.append(
+
+            [
+
+                InlineKeyboardButton(
+
+                    text=(
+                        f"{icon} "
+                        f"{item['bot_name']}"
+                    ),
+
+                    callback_data=(
+                        f"manage_{item['id']}"
+                    )
+
+                )
+
+            ]
+
         )
-    ])
 
-    await callback.message.edit_text(
-        "📋 <b>Жобалар</b>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=buttons
-        ),
-        parse_mode="HTML"
+
+    keyboard.append(
+
+        [
+
+            InlineKeyboardButton(
+
+                text="⬅️ Басты мәзір",
+
+                callback_data="main_menu"
+
+            )
+
+        ]
+
     )
 
-    await callback.answer()
+
+    await safe_edit(
+
+        callback,
+
+        "📋 Менің боттарым:",
+
+        InlineKeyboardMarkup(
+
+            inline_keyboard=keyboard
+
+        )
+
+    )
 
 
-@dp.callback_query(F.data.startswith("manage:"))
+@dp.callback_query(
+    F.data.startswith(
+        "manage_"
+    )
+)
 async def manage_bot(
     callback: types.CallbackQuery
 ):
+
     bot_id = int(
-        callback.data.split(":")[1]
+
+        callback.data.split("_")[1]
+
     )
 
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
+
+    bot_data = (
+        await database.get_bot(bot_id)
     )
+
 
     if not bot_data:
+
         await callback.answer(
-            "❌ Жоба табылмады.",
+
+            "Бот табылмады.",
+
             show_alert=True
+
         )
+
         return
 
-    status = {
+
+    status_map = {
+
         "running": "🟢 Қосулы",
-        "starting": "🟡 Іске қосылуда",
-        "stopped": "🔴 Тоқтатылған",
-        "crashed": "💥 Crash"
-    }.get(
+
+        "stopped": "🔴 Тоқтатылды",
+
+        "crashed": "💥 Қате"
+
+    }
+
+
+    status = status_map.get(
+
         bot_data["status"],
-        "⚪ Белгісіз"
+
+        "❓ Белгісіз"
+
     )
 
-    await callback.message.edit_text(
-        f"🖥 <b>{html.escape(bot_data['name'])}</b>\n\n"
-        f"ID: <code>{bot_id}</code>\n"
-        f"Күйі: <b>{status}</b>",
-        reply_markup=project_menu(bot_id),
-        parse_mode="HTML"
+
+    text = (
+
+        "🖥 Бот басқару\n\n"
+
+        f"📛 Атауы: "
+        f"{bot_data['bot_name']}\n"
+
+        f"📊 Күйі: "
+        f"{status}\n"
+
+        f"🆔 ID: "
+        f"{bot_id}"
+
     )
 
-    await callback.answer()
+
+    await safe_edit(
+
+        callback,
+
+        text,
+
+        manage_menu(bot_id)
+
+    )
 
 
-@dp.callback_query(F.data.startswith("deploy:"))
-async def deployments(
+@dp.callback_query(
+    F.data.startswith(
+        "start_"
+    )
+)
+async def start_bot(
     callback: types.CallbackQuery
 ):
+
     bot_id = int(
-        callback.data.split(":")[1]
+
+        callback.data.split("_")[1]
+
     )
 
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
 
-    if not bot_data:
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
+    success, result = (
+
+        await runner_manager.start_sub_bot(
+
+            bot_id
+
         )
-        return
 
-    latest = await db.get_latest_code(
-        bot_id
     )
 
-    version = (
-        f"v{latest['version']}"
-        if latest
-        else "Код жоқ"
+
+    await callback.answer(
+
+        result,
+
+        show_alert=not success
+
     )
 
-    await callback.message.edit_text(
-        f"🚀 <b>Deployments</b>\n\n"
-        f"📦 Version: <code>{version}</code>\n"
-        f"📊 Status: <b>{bot_data['status']}</b>",
-        reply_markup=deployment_menu(bot_id),
-        parse_mode="HTML"
+
+    if success:
+
+        await callback.message.answer(
+
+            result
+
+        )
+
+
+@dp.callback_query(
+    F.data.startswith(
+        "stop_"
+    )
+)
+async def stop_bot(
+    callback: types.CallbackQuery
+):
+
+    bot_id = int(
+
+        callback.data.split("_")[1]
+
     )
 
-    await callback.answer()
+
+    success, result = (
+
+        await runner_manager.stop_sub_bot(
+
+            bot_id
+
+        )
+
+    )
 
 
-@dp.callback_query(F.data.startswith("code:"))
-async def code_start(
+    await callback.answer(
+
+        result,
+
+        show_alert=not success
+
+    )
+
+
+    await callback.message.answer(
+
+        result
+
+    )
+
+
+@dp.callback_query(
+    F.data.startswith(
+        "code_"
+    )
+)
+async def code_menu(
     callback: types.CallbackQuery,
     state: FSMContext
 ):
+
     bot_id = int(
-        callback.data.split(":")[1]
+
+        callback.data.split("_")[1]
+
     )
 
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
 
     await state.update_data(
+
         bot_id=bot_id
+
     )
+
 
     await state.set_state(
-        CodeStates.waiting_code
+
+        CodeStates.waiting_for_code
+
     )
 
+
     await callback.message.answer(
-        "📝 Python кодын толық жіберіңіз.\n\n"
-        "Child бот ішінде token автоматты түрде "
-        "<code>os.getenv('BOT_TOKEN')</code> арқылы қолжетімді.",
-        parse_mode="HTML"
+
+        "📝 Python кодын толық "
+        "жіберіңіз.\n\n"
+
+        "Бот токенін кодқа "
+        "жазбаңыз.\n\n"
+
+        "Код ішінде:\n"
+
+        "os.getenv('BOT_TOKEN')\n\n"
+
+        "деп қолданыңыз."
+
     )
+
 
     await callback.answer()
 
 
-@dp.message(CodeStates.waiting_code)
+@dp.message(
+    CodeStates.waiting_for_code
+)
 async def save_code(
     message: types.Message,
     state: FSMContext
 ):
-    if not await check_access(
-        message.from_user.id
-    ):
+
+    if not message.text:
+
+        await message.answer(
+
+            "❌ Тек мәтін түріндегі "
+            "Python кодын жіберіңіз."
+
+        )
+
         return
+
 
     data = await state.get_data()
 
-    bot_id = data["bot_id"]
 
-    if not await get_owned_bot(
-        bot_id,
-        message.from_user.id
-    ):
-        await state.clear()
-        await message.answer(
-            "❌ Access denied."
+    version = (
+
+        await database.save_code_version(
+
+            data["bot_id"],
+
+            message.text
+
         )
-        return
 
-    code = message.text or ""
-
-    if not code.strip():
-        await message.answer(
-            "❌ Код бос."
-        )
-        return
-
-    if len(code) > config.MAX_CODE_SIZE:
-        await message.answer(
-            "❌ Код тым үлкен."
-        )
-        return
-
-    result = analyze_code(code)
-
-    if not result["ok"]:
-        await message.answer(
-            "❌ <b>Кодта синтаксис қатесі бар.</b>\n\n"
-            f"<pre>{html.escape(result['error'])}</pre>",
-            parse_mode="HTML"
-        )
-        return
-
-    version, diff = await db.save_code_version(
-        bot_id,
-        code
     )
+
 
     await state.clear()
 
-    warnings = ""
-
-    if result["warnings"]:
-        warnings = (
-            "\n\n⚠️ <b>Ескерту:</b>\n"
-            + "\n".join(
-                f"• {html.escape(x)}"
-                for x in result["warnings"]
-            )
-        )
 
     await message.answer(
-        f"✅ <b>Код сақталды!</b>\n\n"
-        f"Version: <code>v{version}</code>"
-        f"{warnings}",
-        reply_markup=deployment_menu(bot_id),
-        parse_mode="HTML"
+
+        f"✅ Код сақталды!\n\n"
+        f"📦 Version: v{version}",
+
+        reply_markup=manage_menu(
+
+            data["bot_id"]
+
+        )
+
     )
 
 
-@dp.callback_query(F.data.startswith("run:"))
-async def run_bot(
+@dp.callback_query(
+    F.data.startswith(
+        "vars_"
+    )
+)
+async def variables_menu(
     callback: types.CallbackQuery
 ):
+
     bot_id = int(
-        callback.data.split(":")[1]
-    )
 
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
+        callback.data.split("_")[1]
 
-    await callback.answer(
-        "🚀 Іске қосылуда..."
-    )
-
-    await runner_manager.start_sub_bot(
-        bot_id,
-        callback.message.chat.id,
-        bot
     )
 
 
-@dp.callback_query(F.data.startswith("stop:"))
-async def stop_bot(
-    callback: types.CallbackQuery
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
+    variables = (
 
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
+        await database.get_env_vars(
 
-    await callback.answer(
-        "🛑 Тоқтатылуда..."
-    )
+            bot_id
 
-    await runner_manager.stop_sub_bot(
-        bot_id,
-        callback.message.chat.id,
-        bot
-    )
-
-
-@dp.callback_query(F.data.startswith("restart:"))
-async def restart_bot(
-    callback: types.CallbackQuery
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
-
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
-
-    await callback.answer(
-        "🔄 Restart..."
-    )
-
-    await runner_manager.restart_sub_bot(
-        bot_id,
-        callback.message.chat.id,
-        bot
-    )
-
-
-@dp.callback_query(F.data.startswith("vars:"))
-async def variables(
-    callback: types.CallbackQuery
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
-
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
-
-    variables_data = await db.get_env_vars(
-        bot_id
-    )
-
-    lines = [
-        "🔐 <b>Environment Variables</b>",
-        ""
-    ]
-
-    for key in variables_data:
-        lines.append(
-            f"🔑 <code>{html.escape(key)}</code> = <code>********</code>"
         )
 
-    if len(lines) == 2:
-        lines.append("Айнымалылар жоқ.")
+    )
+
+
+    text = (
+
+        "🔐 Environment Variables\n\n"
+
+    )
+
+
+    if not variables:
+
+        text += "📭 Айнымалылар жоқ."
+
+    else:
+
+        for key in variables:
+
+            text += (
+
+                f"🔑 {key} = "
+                f"********\n"
+
+            )
+
 
     keyboard = InlineKeyboardMarkup(
+
         inline_keyboard=[
+
             [
+
                 InlineKeyboardButton(
+
                     text="➕ Variable қосу",
-                    callback_data=f"addvar:{bot_id}"
+
+                    callback_data=(
+                        f"addvar_{bot_id}"
+                    )
+
                 )
+
             ],
+
             [
+
                 InlineKeyboardButton(
+
                     text="⬅️ Артқа",
-                    callback_data=f"manage:{bot_id}"
+
+                    callback_data=(
+                        f"manage_{bot_id}"
+                    )
+
                 )
+
             ]
+
         ]
+
     )
 
-    await callback.message.edit_text(
-        "\n".join(lines),
-        reply_markup=keyboard,
-        parse_mode="HTML"
+
+    await safe_edit(
+
+        callback,
+
+        text,
+
+        keyboard
+
     )
 
-    await callback.answer()
 
-
-@dp.callback_query(F.data.startswith("addvar:"))
-async def add_var(
+@dp.callback_query(
+    F.data.startswith(
+        "addvar_"
+    )
+)
+async def add_variable(
     callback: types.CallbackQuery,
     state: FSMContext
 ):
+
     bot_id = int(
-        callback.data.split(":")[1]
+
+        callback.data.split("_")[1]
+
     )
 
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
 
     await state.update_data(
+
         bot_id=bot_id
+
     )
+
 
     await state.set_state(
-        VarStates.waiting_key
+
+        VarStates.waiting_for_key
+
     )
 
+
     await callback.message.answer(
-        "🔑 Variable KEY енгізіңіз.\n"
-        "Мысалы: API_KEY"
+
+        "🔑 Variable атауын жазыңыз.\n\n"
+
+        "Мысалы:\n"
+
+        "API_KEY"
+
     )
+
 
     await callback.answer()
 
 
-@dp.message(VarStates.waiting_key)
-async def variable_key(
+@dp.message(
+    VarStates.waiting_for_key
+)
+async def get_variable_key(
     message: types.Message,
     state: FSMContext
 ):
-    key = (message.text or "").strip().upper()
 
-    if not key.replace("_", "").isalnum():
-        await message.answer(
-            "❌ Key тек A-Z, 0-9 және _ болуы керек."
-        )
-        return
+    key = (
+
+        message.text.strip().upper()
+
+    )
+
 
     await state.update_data(
-        key=key
+
+        var_key=key
+
     )
+
 
     await state.set_state(
-        VarStates.waiting_value
+
+        VarStates.waiting_for_value
+
     )
+
 
     await message.answer(
-        "🔐 Variable VALUE енгізіңіз:"
+
+        "📝 Variable мәнін жазыңыз:"
+
     )
 
 
-@dp.message(VarStates.waiting_value)
-async def variable_value(
+@dp.message(
+    VarStates.waiting_for_value
+)
+async def get_variable_value(
     message: types.Message,
     state: FSMContext
 ):
+
     data = await state.get_data()
 
-    bot_id = data["bot_id"]
 
-    if not await get_owned_bot(
-        bot_id,
-        message.from_user.id
-    ):
-        await state.clear()
-        await message.answer(
-            "❌ Access denied."
-        )
-        return
+    await database.set_env_var(
 
-    value = message.text or ""
+        data["bot_id"],
 
-    await db.set_env_var(
-        bot_id,
-        data["key"],
-        value
+        data["var_key"],
+
+        message.text
+
     )
+
 
     await state.clear()
 
+
     await message.answer(
-        f"✅ Variable сақталды:\n"
-        f"<code>{html.escape(data['key'])}</code>",
-        reply_markup=project_menu(bot_id),
-        parse_mode="HTML"
-    )
 
+        "✅ Variable сақталды.",
 
-@dp.callback_query(F.data.startswith("metrics:"))
-async def metrics(
-    callback: types.CallbackQuery
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
+        reply_markup=manage_menu(
 
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
+            data["bot_id"]
+
         )
-        return
 
-    cpu = psutil.cpu_percent(
-        interval=0.2
     )
 
-    ram = psutil.virtual_memory()
 
-    process = runner_manager.processes.get(
-        bot_id
+@dp.callback_query(
+    F.data.startswith(
+        "logs_"
     )
-
-    pid = process.pid if process else "—"
-
-    text = (
-        "📊 <b>Server Metrics</b>\n\n"
-        f"🖥 CPU: <code>{cpu}%</code>\n"
-        f"💾 RAM: <code>{ram.percent}%</code>\n"
-        f"📦 RAM used: <code>{ram.used // 1048576} MB</code>\n"
-        f"🔢 Child PID: <code>{pid}</code>\n"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔄 Refresh",
-                        callback_data=f"metrics:{bot_id}"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Артқа",
-                        callback_data=f"manage:{bot_id}"
-                    )
-                ]
-            ]
-        ),
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("logs:"))
+)
 async def logs(
     callback: types.CallbackQuery
 ):
+
     bot_id = int(
-        callback.data.split(":")[1]
+
+        callback.data.split("_")[1]
+
     )
 
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
+
+    logs_data = (
+
+        await database.get_logs(
+
+            bot_id
+
         )
-        return
 
-    rows = await db.get_logs(
-        bot_id,
-        30
     )
 
-    if not rows:
-        text = "📭 <b>Log жоқ.</b>"
+
+    if not logs_data:
+
+        text = "📭 Log жоқ."
+
     else:
-        parts = [
-            "📜 <b>Latest Logs</b>",
-            ""
+
+        lines = []
+
+
+        for item in logs_data:
+
+            level = item.get(
+
+                "level",
+
+                "INFO"
+
+            )
+
+
+            message = item.get(
+
+                "message",
+
+                ""
+
+            )
+
+
+            lines.append(
+
+                f"[{level}] "
+                f"{message}"
+
+            )
+
+
+        text = (
+
+            "📜 Latest Logs\n\n"
+
+            + "\n".join(lines)
+
+        )
+
+
+    if len(text) > 3800:
+
+        text = text[-3800:]
+
+        text = (
+
+            "📜 Latest Logs\n\n"
+
+            + text
+
+        )
+
+
+    keyboard = InlineKeyboardMarkup(
+
+        inline_keyboard=[
+
+            [
+
+                InlineKeyboardButton(
+
+                    text="🔄 Жаңарту",
+
+                    callback_data=(
+                        f"logs_{bot_id}"
+                    )
+
+                )
+
+            ],
+
+            [
+
+                InlineKeyboardButton(
+
+                    text="⬅️ Артқа",
+
+                    callback_data=(
+                        f"manage_{bot_id}"
+                    )
+
+                )
+
+            ]
+
         ]
 
-        for row in reversed(rows):
-            parts.append(
-                f"[{html.escape(row['level'])}] "
-                f"{html.escape(row['message'][:500])}"
-            )
+    )
 
-        text = "\n".join(parts)
 
-    if len(text) > 3900:
-        text = text[-3900:]
+    await safe_edit(
 
-    await callback.message.edit_text(
+        callback,
+
         text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔄 Refresh",
-                        callback_data=f"logs:{bot_id}"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Артқа",
-                        callback_data=f"manage:{bot_id}"
-                    )
-                ]
-            ]
-        ),
-        parse_mode="HTML"
+
+        keyboard
+
     )
 
-    await callback.answer()
 
-
-@dp.callback_query(F.data.startswith("versions:"))
-async def versions(
-    callback: types.CallbackQuery
+async def safe_edit(
+    callback,
+    text,
+    keyboard=None
 ):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
-
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
-
-    rows = await db.get_code_versions(
-        bot_id
-    )
-
-    if not rows:
-        text = "📭 Version жоқ."
-    else:
-        text = "📜 <b>Code Versions</b>\n\n"
-
-        for row in rows:
-            text += (
-                f"• <code>v{row['version']}</code> "
-                f"{row['created_at']}\n"
-            )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Артқа",
-                        callback_data=f"deploy:{bot_id}"
-                    )
-                ]
-            ]
-        ),
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("rollback:"))
-async def rollback_start(
-    callback: types.CallbackQuery,
-    state: FSMContext
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
-
-    if not await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
-
-    await state.update_data(
-        bot_id=bot_id
-    )
-
-    await state.set_state(
-        CodeStates.waiting_restore
-    )
-
-    await callback.message.answer(
-        "↩️ Қай version-ға қайтқыңыз келеді?\n\n"
-        "Мысалы: 1"
-    )
-
-    await callback.answer()
-
-
-@dp.message(CodeStates.waiting_restore)
-async def rollback_process(
-    message: types.Message,
-    state: FSMContext
-):
-    data = await state.get_data()
-
-    bot_id = data["bot_id"]
 
     try:
-        version = int(
-            (message.text or "").strip()
+
+        await callback.message.edit_text(
+
+            text=text,
+
+            reply_markup=keyboard
+
         )
-    except ValueError:
-        await message.answer(
-            "❌ Version тек сан болуы керек."
-        )
-        return
-
-    old = await db.get_code_by_version(
-        bot_id,
-        version
-    )
-
-    if not old:
-        await message.answer(
-            "❌ Мұндай version жоқ."
-        )
-        return
-
-    new_version, _ = await db.save_code_version(
-        bot_id,
-        old["code"]
-    )
-
-    await state.clear()
-
-    await message.answer(
-        f"✅ Rollback дайын.\n\n"
-        f"Ескі version: <code>v{version}</code>\n"
-        f"Жаңа version: <code>v{new_version}</code>\n\n"
-        "Енді Run/Restart арқылы іске қосыңыз.",
-        reply_markup=deployment_menu(bot_id),
-        parse_mode="HTML"
-    )
 
 
-@dp.callback_query(F.data.startswith("settings:"))
-async def settings(
-    callback: types.CallbackQuery
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
+    except TelegramBadRequest as error:
 
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
+        if (
+            "message is not modified"
+            not in str(error).lower()
+        ):
 
-    if not bot_data:
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
-
-    auto = "🟢 ON" if bot_data["auto_restart"] else "🔴 OFF"
-
-    await callback.message.edit_text(
-        f"⚙️ <b>Settings</b>\n\n"
-        f"Auto Restart: <b>{auto}</b>",
-        reply_markup=settings_menu(bot_id),
-        parse_mode="HTML"
-    )
-
-    await callback.answer()
+            raise
 
 
-@dp.callback_query(F.data.startswith("autorestart:"))
-async def toggle_autorestart(
-    callback: types.CallbackQuery
-):
-    bot_id = int(
-        callback.data.split(":")[1]
-    )
+    try:
 
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
+        await callback.answer()
 
-    if not bot_data:
-        await callback.answer(
-            "❌ Access denied.",
-            show_alert=True
-        )
-        return
+    except Exception:
 
-    enabled = not bool(
-        bot_data["auto_restart"]
-    )
-
-    await db.set_auto_restart(
-        bot_id,
-        enabled
-    )
-
-    await callback.answer(
-        "Auto Restart өзгертілді."
-    )
-
-    await settings(callback)
+        pass
 
 
 async def main():
-    await db.init_db()
+
+    if not config.BOT_TOKEN:
+
+        raise RuntimeError(
+
+            "BOT_TOKEN Railway Variables "
+            "ішінде көрсетілмеген."
+
+        )
+
+
+    await database.init_db()
+
 
     logging.info(
-        "🚀 Master Bot Builder started"
+
+        "🚀 Конструктор іске қосылды"
+
     )
 
-    await bot.delete_webhook(
-        drop_pending_updates=True
-    )
 
     await dp.start_polling(
+
         bot
+
     )
 
 
 if __name__ == "__main__":
+
     asyncio.run(main())
