@@ -14,10 +14,6 @@ import database
 from runner import runner_manager
 
 
-# =========================================================
-# LOGGING
-# =========================================================
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
@@ -26,14 +22,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# =========================================================
-# BOT
-# =========================================================
-
 if not config.BOT_TOKEN:
     raise RuntimeError(
         "BOT_TOKEN Railway Variables ішінде көрсетілмеген."
     )
+
 
 bot = Bot(
     token=config.BOT_TOKEN
@@ -109,7 +102,7 @@ async def check_admin_callback(
 
 
 # =========================================================
-# BOT ACCESS
+# GET BOT
 # =========================================================
 
 async def get_owned_bot(
@@ -126,7 +119,7 @@ async def get_owned_bot(
     except Exception as error:
 
         logger.exception(
-            "get_bot error: %s",
+            "Database get_bot error: %s",
             error
         )
 
@@ -142,7 +135,7 @@ async def get_owned_bot(
 
 
 # =========================================================
-# KEYBOARDS
+# MAIN MENU
 # =========================================================
 
 def main_menu():
@@ -164,6 +157,10 @@ def main_menu():
         ]
     )
 
+
+# =========================================================
+# MANAGE MENU
+# =========================================================
 
 def manage_menu(
     bot_id: int
@@ -203,7 +200,7 @@ def manage_menu(
                 InlineKeyboardButton(
                     text="⬅️ Боттар",
                     callback_data="list_bots"
-                ]
+                )
             ],
             [
                 InlineKeyboardButton(
@@ -214,6 +211,10 @@ def manage_menu(
         ]
     )
 
+
+# =========================================================
+# VARIABLES MENU
+# =========================================================
 
 def variables_menu(
     bot_id: int
@@ -243,8 +244,8 @@ def variables_menu(
 
 async def answer_callback(
     callback: types.CallbackQuery,
-    text: str = None,
-    show_alert: bool = False
+    text=None,
+    show_alert=False
 ):
 
     try:
@@ -284,9 +285,9 @@ async def safe_edit(
 
     except TelegramBadRequest as error:
 
-        error_text = str(error).lower()
-
-        if "message is not modified" not in error_text:
+        if "message is not modified" not in str(
+            error
+        ).lower():
 
             logger.exception(
                 "Telegram edit error: %s",
@@ -328,10 +329,12 @@ async def safe_edit(
 
 
 # =========================================================
-# START COMMAND
+# /START
 # =========================================================
 
-@dp.message(CommandStart())
+@dp.message(
+    CommandStart()
+)
 async def start_command(
     message: types.Message,
     state: FSMContext
@@ -348,18 +351,18 @@ async def start_command(
         "🛠 <b>Telegram Bot Constructor</b>\n\n"
         "Бұл жерде Telegram боттарыңызды "
         "басқара аласыз.\n\n"
-        "➕ Жаңа бот қосыңыз\n"
-        "📋 Боттарыңызды басқарыңыз\n"
-        "📝 Код сақтаңыз\n"
-        "🔐 Variables орнатыңыз\n"
-        "📜 Logs көріңіз",
+        "➕ Жаңа бот қосу\n"
+        "📋 Боттар тізімі\n"
+        "📝 Код сақтау\n"
+        "🔐 Variables\n"
+        "📜 Logs",
         reply_markup=main_menu(),
         parse_mode="HTML"
     )
 
 
 # =========================================================
-# MAIN MENU
+# MAIN MENU CALLBACK
 # =========================================================
 
 @dp.callback_query(
@@ -472,8 +475,6 @@ async def get_bot_name(
 
     await message.answer(
         "2️⃣ <b>BotFather токенін жіберіңіз:</b>\n\n"
-        "Мысалы:\n"
-        "<code>123456789:AA...</code>\n\n"
         "⚠️ Токенді ешкімге жарияламаңыз.",
         parse_mode="HTML"
     )
@@ -526,7 +527,7 @@ async def get_bot_token(
 
         await message.answer(
             "❌ Бұл конструктордың токені.\n\n"
-            "Child bot үшін BotFather-дан жеке токен беріңіз."
+            "Child bot үшін жеке BotFather токенін беріңіз."
         )
 
         return
@@ -542,7 +543,8 @@ async def get_bot_token(
         await state.clear()
 
         await message.answer(
-            "❌ Бот атауы табылмады. Қайта бастаңыз: /start"
+            "❌ Бот атауы табылмады.\n\n"
+            "/start арқылы қайта бастаңыз."
         )
 
         return
@@ -563,8 +565,7 @@ async def get_bot_token(
         )
 
         await message.answer(
-            "❌ Ботты базаға сақтау кезінде қате шықты.\n\n"
-            "Railway Logs бөлімін тексеріңіз."
+            "❌ Ботты сақтау кезінде қате шықты."
         )
 
         return
@@ -599,9 +600,9 @@ async def list_bots(
     ):
         return
 
-    # Telegram loading белгісін бірден тоқтатамыз
     await answer_callback(
-        callback
+        callback,
+        "📋 Тізім жүктелуде..."
     )
 
     try:
@@ -617,16 +618,10 @@ async def list_bots(
             error
         )
 
-        try:
-
-            await callback.message.answer(
-                "❌ Боттар тізімін оқу кезінде қате шықты.\n\n"
-                f"Қате: {error}"
-            )
-
-        except Exception:
-
-            pass
+        await callback.message.answer(
+            "❌ Боттар тізімін оқу кезінде қате шықты.\n\n"
+            f"Қате: {error}"
+        )
 
         return
 
@@ -640,19 +635,6 @@ async def list_bots(
                 reply_markup=main_menu(),
                 parse_mode="HTML"
             )
-
-        except TelegramBadRequest as error:
-
-            if "message is not modified" not in str(
-                error
-            ).lower():
-
-                await callback.message.answer(
-                    "📭 <b>Боттар жоқ.</b>\n\n"
-                    "➕ Жаңа бот қосу үшін батырманы басыңыз.",
-                    reply_markup=main_menu(),
-                    parse_mode="HTML"
-                )
 
         except Exception as error:
 
@@ -727,7 +709,7 @@ async def list_bots(
 
     text = (
         "📋 <b>Боттар тізімі</b>\n\n"
-        f"Барлығы: <b>{len(bots)}</b>\n\n"
+        f"🤖 Барлығы: <b>{len(bots)}</b>\n\n"
         "Басқару үшін ботты таңдаңыз:"
     )
 
@@ -768,8 +750,7 @@ async def list_bots(
         )
 
         await callback.message.answer(
-            "❌ Тізімді көрсету кезінде қате шықты.\n\n"
-            f"{error}"
+            "❌ Тізімді көрсету кезінде қате шықты."
         )
 
 
@@ -848,7 +829,7 @@ async def manage_bot(
         f"📛 Атауы: <b>{bot_data['bot_name']}</b>\n"
         f"🆔 ID: <code>{bot_id}</code>\n"
         f"📊 Күйі: {status_text}\n\n"
-        "Төменнен қажетті әрекетті таңдаңыз:"
+        "Қажетті әрекетті таңдаңыз:"
     )
 
     await safe_edit(
@@ -1091,9 +1072,8 @@ async def code_menu(
     await callback.message.answer(
         "📝 <b>Python кодын жіберіңіз.</b>\n\n"
         "Кодта Bot Token-ді жазбаңыз.\n\n"
-        "Оның орнына:\n"
+        "Мына тәсілді қолданыңыз:\n"
         "<code>os.getenv(\"BOT_TOKEN\")</code>\n\n"
-        "қолданыңыз.\n\n"
         "⚠️ Қазіргі нұсқада код Telegram хабарламасы "
         "ретінде қабылданады.",
         parse_mode="HTML"
@@ -1150,8 +1130,7 @@ async def save_code(
         await state.clear()
 
         await message.answer(
-            "❌ Бот ID табылмады.\n"
-            "Қайтадан бастаңыз."
+            "❌ Бот ID табылмады."
         )
 
         return
@@ -1187,7 +1166,7 @@ async def save_code(
 
         await message.answer(
             "❌ Кодты сақтау кезінде қате шықты.\n\n"
-            f"Қате: {error}"
+            f"{error}"
         )
 
         return
@@ -1207,7 +1186,7 @@ async def save_code(
 
 
 # =========================================================
-# VARIABLES MENU
+# VARIABLES
 # =========================================================
 
 @dp.callback_query(
@@ -1273,12 +1252,7 @@ async def variables_menu_handler(
         )
 
         await callback.message.answer(
-            "❌ Variables оқу кезінде қате шықты.\n\n"
-            f"{error}"
-        )
-
-        await answer_callback(
-            callback
+            "❌ Variables оқу кезінде қате шықты."
         )
 
         return
@@ -1474,7 +1448,7 @@ async def get_variable_key(
 
     await message.answer(
         f"🔑 Variable: <code>{key}</code>\n\n"
-        "📝 Енді оның мәнін жазыңыз:",
+        "📝 Енді мәнін жазыңыз:",
         parse_mode="HTML"
     )
 
@@ -1503,8 +1477,6 @@ async def get_variable_value(
         )
 
         return
-
-    value = message.text
 
     data = await state.get_data()
 
@@ -1546,7 +1518,7 @@ async def get_variable_value(
         await database.set_env_var(
             bot_id,
             var_key,
-            value
+            message.text
         )
 
     except Exception as error:
@@ -1557,8 +1529,7 @@ async def get_variable_value(
         )
 
         await message.answer(
-            "❌ Variable сақтау кезінде қате шықты.\n\n"
-            f"{error}"
+            "❌ Variable сақтау кезінде қате шықты."
         )
 
         return
@@ -1644,12 +1615,7 @@ async def logs_handler(
         )
 
         await callback.message.answer(
-            "❌ Logs оқу кезінде қате шықты.\n\n"
-            f"{error}"
-        )
-
-        await answer_callback(
-            callback
+            "❌ Logs оқу кезінде қате шықты."
         )
 
         return
@@ -1693,7 +1659,6 @@ async def logs_handler(
             + "\n".join(lines)
         )
 
-    # Telegram maximum message size
     if len(text) > 3900:
 
         text = (
@@ -1766,13 +1731,14 @@ async def unknown_message(
 
     await message.answer(
         "ℹ️ Түсінбедім.\n\n"
-        "/start басыңыз немесе мәзірдегі батырмаларды пайдаланыңыз.",
+        "/start басыңыз немесе мәзірдегі "
+        "батырмаларды пайдаланыңыз.",
         reply_markup=main_menu()
     )
 
 
 # =========================================================
-# START APPLICATION
+# MAIN
 # =========================================================
 
 async def main():
@@ -1840,4 +1806,4 @@ if __name__ == "__main__":
         logger.exception(
             "❌ Fatal error: %s",
             error
-    )
+        )
