@@ -4,7 +4,7 @@ import os
 # TELEGRAM BOT
 # ============================================================
 
-BOT_TOKEN = "8729117024:AAFhdneWszqgtsBwS8fOhOTkOeWxNDWW3zQ"
+BOT_TOKEN = "8729117024:AAH68IJU9QZ5yAMaAazYzQfWRvCyf_cH1KA"
 
 # ============================================================
 # ADMIN
