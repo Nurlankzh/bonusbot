@@ -1,8 +1,13 @@
+import os
 import aiosqlite
 import difflib
 from datetime import datetime
 
-DB_NAME = "bot_builder.db"
+# Railway Volume немесе жергілікті папканы анықтау
+DATA_DIR = os.getenv("DATA_DIR", "/app/data" if os.path.exists("/app/data") else "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+DB_NAME = os.path.join(DATA_DIR, "bot_builder.db")
 
 async def init_db():
     """Деректер базасының кестелерін құру"""
@@ -32,7 +37,7 @@ async def init_db():
             )
         ''')
 
-        # 3. Логтар мен қателер кестесі
+        # 3. Логтар кестесі
         await db.execute('''
             CREATE TABLE IF NOT EXISTS logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +61,7 @@ async def add_bot(user_id: int, bot_id_name: str, bot_token: str) -> int:
         return cursor.lastrowid
 
 async def get_user_bots(user_id: int):
-    """Пайдаланушының боттар тізімін алу"""
+    """Пайдаланушының боттарын алу"""
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM bots WHERE user_id = ?", (user_id,)) as cursor:
@@ -69,11 +74,17 @@ async def get_bot(bot_db_id: int):
         async with db.execute("SELECT * FROM bots WHERE id = ?", (bot_db_id,)) as cursor:
             return await cursor.fetchone()
 
-async def save_code_version(bot_db_id: int, new_code: str) -> tuple[int, str]:
-    """Кодтың жаңа нұсқасын сақтау және айырмашылықты (diff) есептеу"""
+async def get_running_bots():
+    """Қосулы күйде болған барлық боттарды алу (Ояту үшін)"""
     async with aiosqlite.connect(DB_NAME) as db:
         db.row_factory = aiosqlite.Row
-        # Соңғы нұсқаны алу
+        async with db.execute("SELECT * FROM bots WHERE status = 'running'") as cursor:
+            return await cursor.fetchall()
+
+async def save_code_version(bot_db_id: int, new_code: str) -> tuple[int, str]:
+    """Код нұсқасын сақтау және Diff есептеу"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT version, code FROM code_versions WHERE bot_db_id = ? ORDER BY version DESC LIMIT 1",
             (bot_db_id,)
@@ -85,7 +96,6 @@ async def save_code_version(bot_db_id: int, new_code: str) -> tuple[int, str]:
             old_code_lines = last_ver["code"].splitlines()
             new_code_lines = new_code.splitlines()
             
-            # Айырмашылықты тауып алу
             diff = list(difflib.unified_diff(
                 old_code_lines, new_code_lines,
                 fromfile=f'v{last_ver["version"]}', tofile=f'v{next_version}', lineterm=''
@@ -113,13 +123,13 @@ async def get_latest_code(bot_db_id: int):
             return await cursor.fetchone()
 
 async def update_bot_status(bot_db_id: int, status: str):
-    """Боттың күйін жаңарту (running/stopped)"""
+    """Бот статусын жаңарту"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE bots SET status = ? WHERE id = ?", (status, bot_db_id))
         await db.commit()
 
 async def add_log(bot_db_id: int, log_type: str, message: str):
-    """Лог жазу"""
+    """Лог сақтау"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "INSERT INTO logs (bot_db_id, log_type, message) VALUES (?, ?, ?)",
