@@ -4,6 +4,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import aiohttp
+
 import config
 import database
 
@@ -30,32 +32,83 @@ class RunnerManager:
     # ========================================================
 
     def get_workspace(self, bot_id):
-        return Path(
-            config.WORKSPACE_DIR
-        ) / str(bot_id)
+        return Path(config.WORKSPACE_DIR) / str(bot_id)
 
     # ========================================================
     # LOG
     # ========================================================
 
-    async def safe_log(
-        self,
-        bot_id,
-        level,
-        message
-    ):
+    async def safe_log(self, bot_id, level, message):
         try:
             await database.add_log(
                 bot_id,
                 level,
                 message
             )
-
         except Exception as error:
             print(
                 f"[DATABASE LOG ERROR] "
                 f"bot={bot_id}: {error}"
             )
+
+    # ========================================================
+    # DELETE WEBHOOK
+    # ========================================================
+
+    async def delete_webhook(self, token):
+        """
+        Child bot webhook-ын автомат түрде өшіреді.
+        Бұл getUpdates / polling конфликтін жояды.
+        """
+
+        url = (
+            f"https://api.telegram.org/"
+            f"bot{token}/deleteWebhook"
+        )
+
+        try:
+
+            timeout = aiohttp.ClientTimeout(
+                total=15
+            )
+
+            async with aiohttp.ClientSession(
+                timeout=timeout
+            ) as session:
+
+                async with session.post(
+                    url,
+                    json={
+                        "drop_pending_updates": True
+                    }
+                ) as response:
+
+                    data = await response.json()
+
+                    if data.get("ok"):
+
+                        print(
+                            "🟢 Child bot webhook "
+                            "өшірілді"
+                        )
+
+                        return True
+
+                    print(
+                        f"🔴 Webhook өшіру қатесі: "
+                        f"{data}"
+                    )
+
+                    return False
+
+        except Exception as error:
+
+            print(
+                f"🔴 Webhook request error: "
+                f"{error}"
+            )
+
+            return False
 
     # ========================================================
     # START BOT
@@ -66,10 +119,12 @@ class RunnerManager:
         async with self.get_lock(bot_id):
 
             # ------------------------------------------------
-            # CHECK EXISTING PROCESS
+            # EXISTING PROCESS
             # ------------------------------------------------
 
-            existing = self.processes.get(bot_id)
+            existing = self.processes.get(
+                bot_id
+            )
 
             if existing:
 
@@ -77,7 +132,8 @@ class RunnerManager:
 
                     return (
                         False,
-                        "⚠️ Бот әлдеқашан іске қосылып тұр."
+                        "⚠️ Бот әлдеқашан "
+                        "іске қосылып тұр."
                     )
 
                 self.processes.pop(
@@ -122,7 +178,7 @@ class RunnerManager:
                 )
 
             # ------------------------------------------------
-            # MASTER TOKEN CHECK
+            # MASTER TOKEN PROTECTION
             # ------------------------------------------------
 
             if getattr(
@@ -136,25 +192,31 @@ class RunnerManager:
                     return (
                         False,
                         "❌ Master bot токенін "
-                        "Child bot ретінде қолдануға болмайды."
+                        "Child bot ретінде "
+                        "қолдануға болмайды."
                     )
 
             # ------------------------------------------------
-            # CODE
+            # GET LATEST CODE
             # ------------------------------------------------
 
-            code_data = await database.get_latest_code(
-                bot_id
+            code_data = (
+                await database.get_latest_code(
+                    bot_id
+                )
             )
 
             if not code_data:
 
                 return (
                     False,
-                    "❌ Ботқа Python коды жазылмаған."
+                    "❌ Ботқа Python коды "
+                    "жазылмаған."
                 )
 
-            code = code_data.get("code")
+            code = code_data.get(
+                "code"
+            )
 
             if not code:
 
@@ -185,6 +247,35 @@ class RunnerManager:
                 )
 
             # ------------------------------------------------
+            # DELETE WEBHOOK
+            # ------------------------------------------------
+
+            webhook_deleted = (
+                await self.delete_webhook(
+                    token
+                )
+            )
+
+            if webhook_deleted:
+
+                await self.safe_log(
+                    bot_id,
+                    "INFO",
+                    "Child bot webhook "
+                    "өшірілді"
+                )
+
+            else:
+
+                await self.safe_log(
+                    bot_id,
+                    "WARNING",
+                    "Webhook өшірілмеді. "
+                    "Bot polling кезінде "
+                    "Conflict болуы мүмкін."
+                )
+
+            # ------------------------------------------------
             # WORKSPACE
             # ------------------------------------------------
 
@@ -196,6 +287,10 @@ class RunnerManager:
                 parents=True,
                 exist_ok=True
             )
+
+            # ------------------------------------------------
+            # MAIN.PY
+            # ------------------------------------------------
 
             main_file = (
                 workspace / "main.py"
@@ -234,15 +329,12 @@ class RunnerManager:
 
             env["PYTHONUNBUFFERED"] = "1"
 
-            # ------------------------------------------------
-            # IMPORTANT:
-            # Prevent Python from creating .pyc files
-            # ------------------------------------------------
-
-            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            env[
+                "PYTHONDONTWRITEBYTECODE"
+            ] = "1"
 
             # ------------------------------------------------
-            # START PROCESS
+            # PYTHON EXECUTABLE
             # ------------------------------------------------
 
             python_executable = getattr(
@@ -250,6 +342,10 @@ class RunnerManager:
                 "PYTHON_EXECUTABLE",
                 "python"
             )
+
+            # ------------------------------------------------
+            # START PROCESS
+            # ------------------------------------------------
 
             try:
 
@@ -283,12 +379,14 @@ class RunnerManager:
                 await self.safe_log(
                     bot_id,
                     "ERROR",
-                    f"Process create error: {error}"
+                    f"Process create error: "
+                    f"{error}"
                 )
 
                 return (
                     False,
-                    f"❌ Процесті іске қосу қатесі:\n{error}"
+                    "❌ Процесті іске қосу қатесі:\n"
+                    f"{error}"
                 )
 
             # ------------------------------------------------
@@ -305,17 +403,18 @@ class RunnerManager:
             )
 
             # ------------------------------------------------
-            # LOG PID
+            # PID LOG
             # ------------------------------------------------
 
             await self.safe_log(
                 bot_id,
                 "INFO",
-                f"Process started: PID={process.pid}"
+                f"Process started: "
+                f"PID={process.pid}"
             )
 
             # ------------------------------------------------
-            # WATCH PROCESS
+            # WATCHER
             # ------------------------------------------------
 
             watcher = asyncio.create_task(
@@ -349,7 +448,9 @@ class RunnerManager:
 
             while True:
 
-                line = await process.stdout.readline()
+                line = (
+                    await process.stdout.readline()
+                )
 
                 if not line:
                     break
@@ -363,7 +464,8 @@ class RunnerManager:
                     continue
 
                 print(
-                    f"[BOT {bot_id}] {text}"
+                    f"[BOT {bot_id}] "
+                    f"{text}"
                 )
 
                 asyncio.create_task(
@@ -390,27 +492,28 @@ class RunnerManager:
             )
 
         # ----------------------------------------------------
-        # WAIT PROCESS
+        # WAIT
         # ----------------------------------------------------
 
         try:
 
-            return_code = await process.wait()
+            return_code = (
+                await process.wait()
+            )
 
         except Exception as error:
 
             return_code = -1
 
-            asyncio.create_task(
-                self.safe_log(
-                    bot_id,
-                    "ERROR",
-                    f"Process wait error: {error}"
-                )
+            await self.safe_log(
+                bot_id,
+                "ERROR",
+                f"Process wait error: "
+                f"{error}"
             )
 
         # ----------------------------------------------------
-        # ONLY HANDLE CURRENT PROCESS
+        # CURRENT PROCESS CHECK
         # ----------------------------------------------------
 
         current = self.processes.get(
@@ -444,7 +547,8 @@ class RunnerManager:
             await self.safe_log(
                 bot_id,
                 "INFO",
-                f"Process exited: {return_code}"
+                f"Process exited: "
+                f"{return_code}"
             )
 
         else:
@@ -457,7 +561,8 @@ class RunnerManager:
             await self.safe_log(
                 bot_id,
                 "ERROR",
-                f"Process crashed: exit code {return_code}"
+                f"Process crashed: "
+                f"exit code {return_code}"
             )
 
     # ========================================================
@@ -542,7 +647,7 @@ class RunnerManager:
                 )
 
             # ------------------------------------------------
-            # CLEAN
+            # CLEAN PROCESS
             # ------------------------------------------------
 
             self.processes.pop(
@@ -578,7 +683,7 @@ class RunnerManager:
             )
 
     # ========================================================
-    # RESTART BOT
+    # RESTART
     # ========================================================
 
     async def restart_sub_bot(
@@ -597,7 +702,7 @@ class RunnerManager:
         )
 
     # ========================================================
-    # RUNNING CHECK
+    # IS RUNNING
     # ========================================================
 
     def is_running(
@@ -632,7 +737,9 @@ class RunnerManager:
 
         return {
             "pid": process.pid,
-            "running": process.returncode is None,
+            "running": (
+                process.returncode is None
+            ),
             "returncode": process.returncode
         }
 
