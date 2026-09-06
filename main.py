@@ -14,13 +14,30 @@ import database
 from runner import runner_manager
 
 
+# =========================================================
+# LOGGING
+# =========================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
+logger = logging.getLogger(__name__)
 
-bot = Bot(token=config.BOT_TOKEN)
+
+# =========================================================
+# BOT
+# =========================================================
+
+if not config.BOT_TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN Railway Variables ішінде көрсетілмеген."
+    )
+
+bot = Bot(
+    token=config.BOT_TOKEN
+)
 
 dp = Dispatcher(
     storage=MemoryStorage()
@@ -53,38 +70,72 @@ def is_admin(user_id: int) -> bool:
     return user_id == config.ADMIN_ID
 
 
-async def check_admin_message(message: types.Message) -> bool:
+async def check_admin_message(
+    message: types.Message
+) -> bool:
+
     if not message.from_user:
         return False
 
     if not is_admin(message.from_user.id):
-        await message.answer("⛔ Рұқсат жоқ.")
-        return False
-
-    return True
-
-
-async def check_admin_callback(callback: types.CallbackQuery) -> bool:
-    if not callback.from_user:
-        return False
-
-    if not is_admin(callback.from_user.id):
-        await callback.answer(
-            "⛔ Рұқсат жоқ.",
-            show_alert=True
+        await message.answer(
+            "⛔ Рұқсат жоқ."
         )
         return False
 
     return True
 
 
-async def get_owned_bot(bot_id: int, user_id: int):
-    bot_data = await database.get_bot(bot_id)
+async def check_admin_callback(
+    callback: types.CallbackQuery
+) -> bool:
+
+    if not callback.from_user:
+        return False
+
+    if not is_admin(callback.from_user.id):
+
+        try:
+            await callback.answer(
+                "⛔ Рұқсат жоқ.",
+                show_alert=True
+            )
+        except Exception:
+            pass
+
+        return False
+
+    return True
+
+
+# =========================================================
+# BOT ACCESS
+# =========================================================
+
+async def get_owned_bot(
+    bot_id: int,
+    user_id: int
+):
+
+    try:
+
+        bot_data = await database.get_bot(
+            bot_id
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "get_bot error: %s",
+            error
+        )
+
+        return None
 
     if not bot_data:
         return None
 
-    if bot_data["user_id"] != user_id:
+    if bot_data.get("user_id") != user_id:
         return None
 
     return bot_data
@@ -95,6 +146,7 @@ async def get_owned_bot(bot_id: int, user_id: int):
 # =========================================================
 
 def main_menu():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -113,7 +165,10 @@ def main_menu():
     )
 
 
-def manage_menu(bot_id: int):
+def manage_menu(
+    bot_id: int
+):
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -146,545 +201,25 @@ def manage_menu(bot_id: int):
             ],
             [
                 InlineKeyboardButton(
-                    text="⬅️ Артқа",
+                    text="⬅️ Боттар",
                     callback_data="list_bots"
-                )
-            ]
-        ]
-    )
-
-
-# =========================================================
-# SAFE EDIT
-# =========================================================
-
-async def safe_edit(
-    callback: types.CallbackQuery,
-    text: str,
-    keyboard=None
-):
-    try:
-        await callback.message.edit_text(
-            text=text,
-            reply_markup=keyboard
-        )
-    except TelegramBadRequest as error:
-        if "message is not modified" not in str(error).lower():
-            raise
-
-    try:
-        await callback.answer()
-    except Exception:
-        pass
-
-
-# =========================================================
-# START
-# =========================================================
-
-@dp.message(CommandStart())
-async def start_command(message: types.Message):
-    if not await check_admin_message(message):
-        return
-
-    await message.answer(
-        "🛠 Бот Конструктор\n\n"
-        "Мұнда өз Telegram боттарыңызды "
-        "қосып, кодын сақтап және іске "
-        "қоса аласыз.",
-        reply_markup=main_menu()
-    )
-
-
-# =========================================================
-# MAIN MENU
-# =========================================================
-
-@dp.callback_query(F.data == "main_menu")
-async def back_main(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
-        return
-
-    await safe_edit(
-        callback,
-        "🏠 Басты мәзір",
-        main_menu()
-    )
-
-
-# =========================================================
-# ADD BOT
-# =========================================================
-
-@dp.callback_query(F.data == "add_bot")
-async def add_bot(
-    callback: types.CallbackQuery,
-    state: FSMContext
-):
-    if not await check_admin_callback(callback):
-        return
-
-    await state.set_state(
-        AddBotStates.waiting_for_name
-    )
-
-    await callback.message.answer(
-        "✏️ Боттың атауын жазыңыз:"
-    )
-
-    await callback.answer()
-
-
-@dp.message(AddBotStates.waiting_for_name)
-async def get_bot_name(
-    message: types.Message,
-    state: FSMContext
-):
-    if not await check_admin_message(message):
-        return
-
-    if not message.text:
-        await message.answer(
-            "❌ Бот атауын мәтін түрінде жіберіңіз."
-        )
-        return
-
-    bot_name = message.text.strip()
-
-    if not bot_name:
-        await message.answer(
-            "❌ Бот атауы бос болмауы керек."
-        )
-        return
-
-    await state.update_data(
-        bot_name=bot_name
-    )
-
-    await state.set_state(
-        AddBotStates.waiting_for_token
-    )
-
-    await message.answer(
-        "🔑 BotFather берген бот токенін жіберіңіз:"
-    )
-
-
-@dp.message(AddBotStates.waiting_for_token)
-async def get_bot_token(
-    message: types.Message,
-    state: FSMContext
-):
-    if not await check_admin_message(message):
-        return
-
-    if not message.text:
-        await message.answer(
-            "❌ Токен мәтін түрінде болуы керек."
-        )
-        return
-
-    token = message.text.strip()
-
-    if not token:
-        await message.answer(
-            "❌ Токен бос болмауы керек."
-        )
-        return
-
-    data = await state.get_data()
-
-    # Конструктордың токенін child bot ретінде қолдануға тыйым салу
-    if token == config.BOT_TOKEN:
-        await message.answer(
-            "❌ Бұл конструктор боттың токені.\n\n"
-            "Child bot үшін BotFather-дан жеке токен қолданыңыз."
-        )
-        return
-
-    # Telegram token форматына базалық тексеру
-    if ":" not in token:
-        await message.answer(
-            "❌ Токен форматы дұрыс емес."
-        )
-        return
-
-    bot_id = await database.add_bot(
-        message.from_user.id,
-        data["bot_name"],
-        token
-    )
-
-    await state.clear()
-
-    await message.answer(
-        f"✅ Бот қосылды!\n\n"
-        f"📛 Атауы: {data['bot_name']}\n"
-        f"🆔 ID: {bot_id}",
-        reply_markup=main_menu()
-    )
-
-
-# =========================================================
-# LIST BOTS
-# =========================================================
-
-@dp.callback_query(F.data == "list_bots")
-async def list_bots(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
-        return
-
-    bots = await database.get_user_bots(
-        callback.from_user.id
-    )
-
-    if not bots:
-        await safe_edit(
-            callback,
-            "📭 Боттар жоқ.",
-            main_menu()
-        )
-        return
-
-    keyboard = []
-
-    for item in bots:
-        status = item["status"]
-
-        if status == "running":
-            icon = "🟢"
-        elif status == "crashed":
-            icon = "💥"
-        else:
-            icon = "🔴"
-
-        keyboard.append(
+                ]
+            ],
             [
                 InlineKeyboardButton(
-                    text=f"{icon} {item['bot_name']}",
-                    callback_data=f"manage_{item['id']}"
+                    text="🏠 Басты мәзір",
+                    callback_data="main_menu"
                 )
             ]
-        )
-
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ Басты мәзір",
-                callback_data="main_menu"
-            )
         ]
     )
 
-    await safe_edit(
-        callback,
-        "📋 Менің боттарым:",
-        InlineKeyboardMarkup(
-            inline_keyboard=keyboard
-        )
-    )
 
-
-# =========================================================
-# MANAGE BOT
-# =========================================================
-
-@dp.callback_query(F.data.startswith("manage_"))
-async def manage_bot(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
-        return
-
-    try:
-        bot_id = int(
-            callback.data.split("_", 1)[1]
-        )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате бот ID.",
-            show_alert=True
-        )
-        return
-
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
-
-    if not bot_data:
-        await callback.answer(
-            "⛔ Бот табылмады немесе сізге тиесілі емес.",
-            show_alert=True
-        )
-        return
-
-    status_map = {
-        "running": "🟢 Қосулы",
-        "stopped": "🔴 Тоқтатылды",
-        "crashed": "💥 Қате"
-    }
-
-    status = status_map.get(
-        bot_data["status"],
-        "❓ Белгісіз"
-    )
-
-    text = (
-        "🖥 Бот басқару\n\n"
-        f"📛 Атауы: {bot_data['bot_name']}\n"
-        f"📊 Күйі: {status}\n"
-        f"🆔 ID: {bot_id}"
-    )
-
-    await safe_edit(
-        callback,
-        text,
-        manage_menu(bot_id)
-    )
-
-
-# =========================================================
-# START BOT
-# =========================================================
-
-@dp.callback_query(F.data.startswith("start_"))
-async def start_bot(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
-        return
-
-    try:
-        bot_id = int(
-            callback.data.split("_", 1)[1]
-        )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате бот ID.",
-            show_alert=True
-        )
-        return
-
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
-
-    if not bot_data:
-        await callback.answer(
-            "⛔ Бот табылмады.",
-            show_alert=True
-        )
-        return
-
-    success, result = await runner_manager.start_sub_bot(
-        bot_id
-    )
-
-    await callback.answer(
-        result,
-        show_alert=not success
-    )
-
-    if success:
-        await callback.message.answer(
-            result
-        )
-
-
-# =========================================================
-# STOP BOT
-# =========================================================
-
-@dp.callback_query(F.data.startswith("stop_"))
-async def stop_bot(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
-        return
-
-    try:
-        bot_id = int(
-            callback.data.split("_", 1)[1]
-        )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате бот ID.",
-            show_alert=True
-        )
-        return
-
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
-
-    if not bot_data:
-        await callback.answer(
-            "⛔ Бот табылмады.",
-            show_alert=True
-        )
-        return
-
-    success, result = await runner_manager.stop_sub_bot(
-        bot_id
-    )
-
-    await callback.answer(
-        result,
-        show_alert=not success
-    )
-
-    await callback.message.answer(
-        result
-    )
-
-
-# =========================================================
-# CODE MENU
-# =========================================================
-
-@dp.callback_query(F.data.startswith("code_"))
-async def code_menu(
-    callback: types.CallbackQuery,
-    state: FSMContext
+def variables_menu(
+    bot_id: int
 ):
-    if not await check_admin_callback(callback):
-        return
 
-    try:
-        bot_id = int(
-            callback.data.split("_", 1)[1]
-        )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате бот ID.",
-            show_alert=True
-        )
-        return
-
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
-
-    if not bot_data:
-        await callback.answer(
-            "⛔ Бот табылмады.",
-            show_alert=True
-        )
-        return
-
-    await state.update_data(
-        bot_id=bot_id
-    )
-
-    await state.set_state(
-        CodeStates.waiting_for_code
-    )
-
-    await callback.message.answer(
-        "📝 Python кодын толық жіберіңіз.\n\n"
-        "⚠️ Бот токенін кодқа жазбаңыз.\n\n"
-        "Код ішінде:\n"
-        "os.getenv('BOT_TOKEN')\n\n"
-        "деп қолданыңыз."
-    )
-
-    await callback.answer()
-
-
-@dp.message(CodeStates.waiting_for_code)
-async def save_code(
-    message: types.Message,
-    state: FSMContext
-):
-    if not await check_admin_message(message):
-        return
-
-    if not message.text:
-        await message.answer(
-            "❌ Тек мәтін түріндегі Python кодын жіберіңіз."
-        )
-        return
-
-    data = await state.get_data()
-
-    bot_id = data.get("bot_id")
-
-    if not bot_id:
-        await state.clear()
-        await message.answer(
-            "❌ Бот ID табылмады."
-        )
-        return
-
-    bot_data = await get_owned_bot(
-        bot_id,
-        message.from_user.id
-    )
-
-    if not bot_data:
-        await state.clear()
-        await message.answer(
-            "⛔ Бот табылмады."
-        )
-        return
-
-    version = await database.save_code_version(
-        bot_id,
-        message.text
-    )
-
-    await state.clear()
-
-    await message.answer(
-        f"✅ Код сақталды!\n\n"
-        f"📦 Version: v{version}",
-        reply_markup=manage_menu(bot_id)
-    )
-
-
-# =========================================================
-# VARIABLES
-# =========================================================
-
-@dp.callback_query(F.data.startswith("vars_"))
-async def variables_menu(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
-        return
-
-    try:
-        bot_id = int(
-            callback.data.split("_", 1)[1]
-        )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате бот ID.",
-            show_alert=True
-        )
-        return
-
-    bot_data = await get_owned_bot(
-        bot_id,
-        callback.from_user.id
-    )
-
-    if not bot_data:
-        await callback.answer(
-            "⛔ Бот табылмады.",
-            show_alert=True
-        )
-        return
-
-    variables = await database.get_env_vars(
-        bot_id
-    )
-
-    text = "🔐 Environment Variables\n\n"
-
-    if not variables:
-        text += "📭 Айнымалылар жоқ."
-    else:
-        for key in variables:
-            text += f"🔑 {key} = ********\n"
-
-    keyboard = InlineKeyboardMarkup(
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
@@ -701,30 +236,579 @@ async def variables_menu(callback: types.CallbackQuery):
         ]
     )
 
-    await safe_edit(
-        callback,
-        text,
-        keyboard
+
+# =========================================================
+# CALLBACK ANSWER
+# =========================================================
+
+async def answer_callback(
+    callback: types.CallbackQuery,
+    text: str = None,
+    show_alert: bool = False
+):
+
+    try:
+
+        if text:
+
+            await callback.answer(
+                text,
+                show_alert=show_alert
+            )
+
+        else:
+
+            await callback.answer()
+
+    except Exception:
+
+        pass
+
+
+# =========================================================
+# SAFE EDIT
+# =========================================================
+
+async def safe_edit(
+    callback: types.CallbackQuery,
+    text: str,
+    keyboard=None
+):
+
+    try:
+
+        await callback.message.edit_text(
+            text=text,
+            reply_markup=keyboard
+        )
+
+    except TelegramBadRequest as error:
+
+        error_text = str(error).lower()
+
+        if "message is not modified" not in error_text:
+
+            logger.exception(
+                "Telegram edit error: %s",
+                error
+            )
+
+            try:
+
+                await callback.message.answer(
+                    text,
+                    reply_markup=keyboard
+                )
+
+            except Exception:
+
+                pass
+
+    except Exception as error:
+
+        logger.exception(
+            "safe_edit error: %s",
+            error
+        )
+
+        try:
+
+            await callback.message.answer(
+                text,
+                reply_markup=keyboard
+            )
+
+        except Exception:
+
+            pass
+
+    await answer_callback(
+        callback
     )
 
 
-@dp.callback_query(F.data.startswith("addvar_"))
-async def add_variable(
+# =========================================================
+# START COMMAND
+# =========================================================
+
+@dp.message(CommandStart())
+async def start_command(
+    message: types.Message,
+    state: FSMContext
+):
+
+    if not await check_admin_message(
+        message
+    ):
+        return
+
+    await state.clear()
+
+    await message.answer(
+        "🛠 <b>Telegram Bot Constructor</b>\n\n"
+        "Бұл жерде Telegram боттарыңызды "
+        "басқара аласыз.\n\n"
+        "➕ Жаңа бот қосыңыз\n"
+        "📋 Боттарыңызды басқарыңыз\n"
+        "📝 Код сақтаңыз\n"
+        "🔐 Variables орнатыңыз\n"
+        "📜 Logs көріңіз",
+        reply_markup=main_menu(),
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# MAIN MENU
+# =========================================================
+
+@dp.callback_query(
+    F.data == "main_menu"
+)
+async def back_main(
     callback: types.CallbackQuery,
     state: FSMContext
 ):
-    if not await check_admin_callback(callback):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    await state.clear()
+
+    await safe_edit(
+        callback,
+        "🏠 <b>Басты мәзір</b>\n\n"
+        "Қажетті бөлімді таңдаңыз:",
+        main_menu()
+    )
+
+
+# =========================================================
+# ADD BOT
+# =========================================================
+
+@dp.callback_query(
+    F.data == "add_bot"
+)
+async def add_bot(
+    callback: types.CallbackQuery,
+    state: FSMContext
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    await state.clear()
+
+    await state.set_state(
+        AddBotStates.waiting_for_name
+    )
+
+    await callback.message.answer(
+        "➕ <b>Жаңа бот қосу</b>\n\n"
+        "1️⃣ Боттың атауын жазыңыз:",
+        parse_mode="HTML"
+    )
+
+    await answer_callback(
+        callback
+    )
+
+
+# =========================================================
+# BOT NAME
+# =========================================================
+
+@dp.message(
+    AddBotStates.waiting_for_name
+)
+async def get_bot_name(
+    message: types.Message,
+    state: FSMContext
+):
+
+    if not await check_admin_message(
+        message
+    ):
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❌ Бот атауын мәтін түрінде жіберіңіз."
+        )
+
+        return
+
+    bot_name = message.text.strip()
+
+    if not bot_name:
+
+        await message.answer(
+            "❌ Бот атауы бос болмауы керек."
+        )
+
+        return
+
+    if len(bot_name) > 100:
+
+        await message.answer(
+            "❌ Бот атауы 100 таңбадан аспауы керек."
+        )
+
+        return
+
+    await state.update_data(
+        bot_name=bot_name
+    )
+
+    await state.set_state(
+        AddBotStates.waiting_for_token
+    )
+
+    await message.answer(
+        "2️⃣ <b>BotFather токенін жіберіңіз:</b>\n\n"
+        "Мысалы:\n"
+        "<code>123456789:AA...</code>\n\n"
+        "⚠️ Токенді ешкімге жарияламаңыз.",
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# BOT TOKEN
+# =========================================================
+
+@dp.message(
+    AddBotStates.waiting_for_token
+)
+async def get_bot_token(
+    message: types.Message,
+    state: FSMContext
+):
+
+    if not await check_admin_message(
+        message
+    ):
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❌ Токен мәтін түрінде болуы керек."
+        )
+
+        return
+
+    token = message.text.strip()
+
+    if not token:
+
+        await message.answer(
+            "❌ Токен бос болмауы керек."
+        )
+
+        return
+
+    if ":" not in token:
+
+        await message.answer(
+            "❌ Telegram Bot Token форматы дұрыс емес."
+        )
+
+        return
+
+    if token == config.BOT_TOKEN:
+
+        await message.answer(
+            "❌ Бұл конструктордың токені.\n\n"
+            "Child bot үшін BotFather-дан жеке токен беріңіз."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    bot_name = data.get(
+        "bot_name"
+    )
+
+    if not bot_name:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Бот атауы табылмады. Қайта бастаңыз: /start"
+        )
+
         return
 
     try:
+
+        bot_id = await database.add_bot(
+            message.from_user.id,
+            bot_name,
+            token
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "add_bot error: %s",
+            error
+        )
+
+        await message.answer(
+            "❌ Ботты базаға сақтау кезінде қате шықты.\n\n"
+            "Railway Logs бөлімін тексеріңіз."
+        )
+
+        return
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Бот сәтті қосылды!</b>\n\n"
+        f"📛 Атауы: <b>{bot_name}</b>\n"
+        f"🆔 ID: <code>{bot_id}</code>\n"
+        "🔴 Күйі: Тоқтатылды",
+        reply_markup=manage_menu(
+            bot_id
+        ),
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# LIST BOTS
+# =========================================================
+
+@dp.callback_query(
+    F.data == "list_bots"
+)
+async def list_bots(
+    callback: types.CallbackQuery
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    # Telegram loading белгісін бірден тоқтатамыз
+    await answer_callback(
+        callback
+    )
+
+    try:
+
+        bots = await database.get_user_bots(
+            callback.from_user.id
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "get_user_bots error: %s",
+            error
+        )
+
+        try:
+
+            await callback.message.answer(
+                "❌ Боттар тізімін оқу кезінде қате шықты.\n\n"
+                f"Қате: {error}"
+            )
+
+        except Exception:
+
+            pass
+
+        return
+
+    if not bots:
+
+        try:
+
+            await callback.message.edit_text(
+                "📭 <b>Боттар жоқ.</b>\n\n"
+                "➕ Жаңа бот қосу үшін батырманы басыңыз.",
+                reply_markup=main_menu(),
+                parse_mode="HTML"
+            )
+
+        except TelegramBadRequest as error:
+
+            if "message is not modified" not in str(
+                error
+            ).lower():
+
+                await callback.message.answer(
+                    "📭 <b>Боттар жоқ.</b>\n\n"
+                    "➕ Жаңа бот қосу үшін батырманы басыңыз.",
+                    reply_markup=main_menu(),
+                    parse_mode="HTML"
+                )
+
+        except Exception as error:
+
+            logger.exception(
+                "Empty list error: %s",
+                error
+            )
+
+            await callback.message.answer(
+                "📭 Боттар жоқ.",
+                reply_markup=main_menu()
+            )
+
+        return
+
+    keyboard = []
+
+    for item in bots:
+
+        bot_id = item.get(
+            "id"
+        )
+
+        bot_name = item.get(
+            "bot_name",
+            "Атаусыз"
+        )
+
+        status = item.get(
+            "status",
+            "stopped"
+        )
+
+        if status == "running":
+
+            icon = "🟢"
+
+        elif status == "crashed":
+
+            icon = "💥"
+
+        else:
+
+            icon = "🔴"
+
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{icon} {bot_name}",
+                    callback_data=f"manage_{bot_id}"
+                )
+            ]
+        )
+
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="➕ Жаңа бот қосу",
+                callback_data="add_bot"
+            )
+        ]
+    )
+
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="🏠 Басты мәзір",
+                callback_data="main_menu"
+            )
+        ]
+    )
+
+    text = (
+        "📋 <b>Боттар тізімі</b>\n\n"
+        f"Барлығы: <b>{len(bots)}</b>\n\n"
+        "Басқару үшін ботты таңдаңыз:"
+    )
+
+    try:
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=keyboard
+            ),
+            parse_mode="HTML"
+        )
+
+    except TelegramBadRequest as error:
+
+        if "message is not modified" not in str(
+            error
+        ).lower():
+
+            logger.exception(
+                "list_bots Telegram error: %s",
+                error
+            )
+
+            await callback.message.answer(
+                text,
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=keyboard
+                ),
+                parse_mode="HTML"
+            )
+
+    except Exception as error:
+
+        logger.exception(
+            "list_bots error: %s",
+            error
+        )
+
+        await callback.message.answer(
+            "❌ Тізімді көрсету кезінде қате шықты.\n\n"
+            f"{error}"
+        )
+
+
+# =========================================================
+# MANAGE BOT
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("manage_")
+)
+async def manage_bot(
+    callback: types.CallbackQuery
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    try:
+
         bot_id = int(
-            callback.data.split("_", 1)[1]
+            callback.data.split(
+                "_",
+                1
+            )[1]
         )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате бот ID.",
-            show_alert=True
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
         )
+
         return
 
     bot_data = await get_owned_bot(
@@ -733,11 +817,556 @@ async def add_variable(
     )
 
     if not bot_data:
-        await callback.answer(
+
+        await answer_callback(
+            callback,
             "⛔ Бот табылмады.",
-            show_alert=True
+            True
         )
+
         return
+
+    status = bot_data.get(
+        "status",
+        "stopped"
+    )
+
+    if status == "running":
+
+        status_text = "🟢 Қосулы"
+
+    elif status == "crashed":
+
+        status_text = "💥 Қате"
+
+    else:
+
+        status_text = "🔴 Тоқтатылды"
+
+    text = (
+        "🖥 <b>Ботты басқару</b>\n\n"
+        f"📛 Атауы: <b>{bot_data['bot_name']}</b>\n"
+        f"🆔 ID: <code>{bot_id}</code>\n"
+        f"📊 Күйі: {status_text}\n\n"
+        "Төменнен қажетті әрекетті таңдаңыз:"
+    )
+
+    await safe_edit(
+        callback,
+        text,
+        manage_menu(
+            bot_id
+        )
+    )
+
+
+# =========================================================
+# START CHILD BOT
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("start_")
+)
+async def start_bot(
+    callback: types.CallbackQuery
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    try:
+
+        bot_id = int(
+            callback.data.split(
+                "_",
+                1
+            )[1]
+        )
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
+        )
+
+        return
+
+    bot_data = await get_owned_bot(
+        bot_id,
+        callback.from_user.id
+    )
+
+    if not bot_data:
+
+        await answer_callback(
+            callback,
+            "⛔ Бот табылмады.",
+            True
+        )
+
+        return
+
+    await answer_callback(
+        callback,
+        "🚀 Бот іске қосылуда..."
+    )
+
+    try:
+
+        success, result = await runner_manager.start_sub_bot(
+            bot_id
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "start_sub_bot error: %s",
+            error
+        )
+
+        success = False
+
+        result = (
+            "❌ Ботты іске қосу кезінде қате шықты.\n\n"
+            f"{error}"
+        )
+
+    await callback.message.answer(
+        result
+    )
+
+
+# =========================================================
+# STOP CHILD BOT
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("stop_")
+)
+async def stop_bot(
+    callback: types.CallbackQuery
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    try:
+
+        bot_id = int(
+            callback.data.split(
+                "_",
+                1
+            )[1]
+        )
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
+        )
+
+        return
+
+    bot_data = await get_owned_bot(
+        bot_id,
+        callback.from_user.id
+    )
+
+    if not bot_data:
+
+        await answer_callback(
+            callback,
+            "⛔ Бот табылмады.",
+            True
+        )
+
+        return
+
+    await answer_callback(
+        callback,
+        "🛑 Бот тоқтатылуда..."
+    )
+
+    try:
+
+        success, result = await runner_manager.stop_sub_bot(
+            bot_id
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "stop_sub_bot error: %s",
+            error
+        )
+
+        result = (
+            "❌ Ботты тоқтату кезінде қате шықты.\n\n"
+            f"{error}"
+        )
+
+    await callback.message.answer(
+        result
+    )
+
+
+# =========================================================
+# CODE MENU
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("code_")
+)
+async def code_menu(
+    callback: types.CallbackQuery,
+    state: FSMContext
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    try:
+
+        bot_id = int(
+            callback.data.split(
+                "_",
+                1
+            )[1]
+        )
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
+        )
+
+        return
+
+    bot_data = await get_owned_bot(
+        bot_id,
+        callback.from_user.id
+    )
+
+    if not bot_data:
+
+        await answer_callback(
+            callback,
+            "⛔ Бот табылмады.",
+            True
+        )
+
+        return
+
+    await state.clear()
+
+    await state.update_data(
+        bot_id=bot_id
+    )
+
+    await state.set_state(
+        CodeStates.waiting_for_code
+    )
+
+    await callback.message.answer(
+        "📝 <b>Python кодын жіберіңіз.</b>\n\n"
+        "Кодта Bot Token-ді жазбаңыз.\n\n"
+        "Оның орнына:\n"
+        "<code>os.getenv(\"BOT_TOKEN\")</code>\n\n"
+        "қолданыңыз.\n\n"
+        "⚠️ Қазіргі нұсқада код Telegram хабарламасы "
+        "ретінде қабылданады.",
+        parse_mode="HTML"
+    )
+
+    await answer_callback(
+        callback
+    )
+
+
+# =========================================================
+# SAVE CODE
+# =========================================================
+
+@dp.message(
+    CodeStates.waiting_for_code
+)
+async def save_code(
+    message: types.Message,
+    state: FSMContext
+):
+
+    if not await check_admin_message(
+        message
+    ):
+        return
+
+    if not message.text:
+
+        await message.answer(
+            "❌ Python кодын мәтін ретінде жіберіңіз."
+        )
+
+        return
+
+    code = message.text
+
+    if not code.strip():
+
+        await message.answer(
+            "❌ Код бос болмауы керек."
+        )
+
+        return
+
+    data = await state.get_data()
+
+    bot_id = data.get(
+        "bot_id"
+    )
+
+    if not bot_id:
+
+        await state.clear()
+
+        await message.answer(
+            "❌ Бот ID табылмады.\n"
+            "Қайтадан бастаңыз."
+        )
+
+        return
+
+    bot_data = await get_owned_bot(
+        bot_id,
+        message.from_user.id
+    )
+
+    if not bot_data:
+
+        await state.clear()
+
+        await message.answer(
+            "⛔ Бот табылмады."
+        )
+
+        return
+
+    try:
+
+        version = await database.save_code_version(
+            bot_id,
+            code
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "save_code error: %s",
+            error
+        )
+
+        await message.answer(
+            "❌ Кодты сақтау кезінде қате шықты.\n\n"
+            f"Қате: {error}"
+        )
+
+        return
+
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Код сақталды!</b>\n\n"
+        f"🤖 Бот: <b>{bot_data['bot_name']}</b>\n"
+        f"📦 Version: <b>v{version}</b>\n"
+        f"📏 Код көлемі: <b>{len(code)}</b> таңба",
+        reply_markup=manage_menu(
+            bot_id
+        ),
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# VARIABLES MENU
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("vars_")
+)
+async def variables_menu_handler(
+    callback: types.CallbackQuery
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    try:
+
+        bot_id = int(
+            callback.data.split(
+                "_",
+                1
+            )[1]
+        )
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
+        )
+
+        return
+
+    bot_data = await get_owned_bot(
+        bot_id,
+        callback.from_user.id
+    )
+
+    if not bot_data:
+
+        await answer_callback(
+            callback,
+            "⛔ Бот табылмады.",
+            True
+        )
+
+        return
+
+    try:
+
+        variables = await database.get_env_vars(
+            bot_id
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "get_env_vars error: %s",
+            error
+        )
+
+        await callback.message.answer(
+            "❌ Variables оқу кезінде қате шықты.\n\n"
+            f"{error}"
+        )
+
+        await answer_callback(
+            callback
+        )
+
+        return
+
+    text = (
+        "🔐 <b>Environment Variables</b>\n\n"
+    )
+
+    if not variables:
+
+        text += (
+            "📭 Variable жоқ.\n\n"
+            "➕ Жаңа variable қосуға болады."
+        )
+
+    else:
+
+        for key in variables:
+
+            text += (
+                f"🔑 <code>{key}</code> = "
+                "••••••••\n"
+            )
+
+    await safe_edit(
+        callback,
+        text,
+        variables_menu(
+            bot_id
+        )
+    )
+
+
+# =========================================================
+# ADD VARIABLE
+# =========================================================
+
+@dp.callback_query(
+    F.data.startswith("addvar_")
+)
+async def add_variable(
+    callback: types.CallbackQuery,
+    state: FSMContext
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
+        return
+
+    try:
+
+        bot_id = int(
+            callback.data.split(
+                "_",
+                1
+            )[1]
+        )
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
+        )
+
+        return
+
+    bot_data = await get_owned_bot(
+        bot_id,
+        callback.from_user.id
+    )
+
+    if not bot_data:
+
+        await answer_callback(
+            callback,
+            "⛔ Бот табылмады.",
+            True
+        )
+
+        return
+
+    await state.clear()
 
     await state.update_data(
         bot_id=bot_id
@@ -748,45 +1377,76 @@ async def add_variable(
     )
 
     await callback.message.answer(
-        "🔑 Variable атауын жазыңыз.\n\n"
+        "🔑 <b>Variable атауын жазыңыз:</b>\n\n"
         "Мысалы:\n"
-        "API_KEY"
+        "<code>API_KEY</code>\n"
+        "<code>DATABASE_URL</code>\n"
+        "<code>ADMIN_ID</code>",
+        parse_mode="HTML"
     )
 
-    await callback.answer()
+    await answer_callback(
+        callback
+    )
 
 
-@dp.message(VarStates.waiting_for_key)
+# =========================================================
+# VARIABLE KEY
+# =========================================================
+
+@dp.message(
+    VarStates.waiting_for_key
+)
 async def get_variable_key(
     message: types.Message,
     state: FSMContext
 ):
-    if not await check_admin_message(message):
+
+    if not await check_admin_message(
+        message
+    ):
         return
 
     if not message.text:
+
         await message.answer(
             "❌ Variable атауын мәтін түрінде жіберіңіз."
         )
+
         return
 
     key = message.text.strip().upper()
 
     if not key:
+
         await message.answer(
             "❌ Variable атауы бос болмауы керек."
         )
+
+        return
+
+    if len(key) > 100:
+
+        await message.answer(
+            "❌ Variable атауы тым ұзын."
+        )
+
         return
 
     data = await state.get_data()
 
-    bot_id = data.get("bot_id")
+    bot_id = data.get(
+        "bot_id"
+    )
 
     if not bot_id:
+
         await state.clear()
+
         await message.answer(
             "❌ Бот ID табылмады."
         )
+
         return
 
     bot_data = await get_owned_bot(
@@ -795,10 +1455,13 @@ async def get_variable_key(
     )
 
     if not bot_data:
+
         await state.clear()
+
         await message.answer(
             "⛔ Бот табылмады."
         )
+
         return
 
     await state.update_data(
@@ -810,34 +1473,57 @@ async def get_variable_key(
     )
 
     await message.answer(
-        "📝 Variable мәнін жазыңыз:"
+        f"🔑 Variable: <code>{key}</code>\n\n"
+        "📝 Енді оның мәнін жазыңыз:",
+        parse_mode="HTML"
     )
 
 
-@dp.message(VarStates.waiting_for_value)
+# =========================================================
+# VARIABLE VALUE
+# =========================================================
+
+@dp.message(
+    VarStates.waiting_for_value
+)
 async def get_variable_value(
     message: types.Message,
     state: FSMContext
 ):
-    if not await check_admin_message(message):
+
+    if not await check_admin_message(
+        message
+    ):
         return
 
     if not message.text:
+
         await message.answer(
             "❌ Variable мәнін мәтін түрінде жіберіңіз."
         )
+
         return
+
+    value = message.text
 
     data = await state.get_data()
 
-    bot_id = data.get("bot_id")
-    var_key = data.get("var_key")
+    bot_id = data.get(
+        "bot_id"
+    )
+
+    var_key = data.get(
+        "var_key"
+    )
 
     if not bot_id or not var_key:
+
         await state.clear()
+
         await message.answer(
             "❌ Variable деректері табылмады."
         )
+
         return
 
     bot_data = await get_owned_bot(
@@ -846,23 +1532,47 @@ async def get_variable_value(
     )
 
     if not bot_data:
+
         await state.clear()
+
         await message.answer(
             "⛔ Бот табылмады."
         )
+
         return
 
-    await database.set_env_var(
-        bot_id,
-        var_key,
-        message.text
-    )
+    try:
+
+        await database.set_env_var(
+            bot_id,
+            var_key,
+            value
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "set_env_var error: %s",
+            error
+        )
+
+        await message.answer(
+            "❌ Variable сақтау кезінде қате шықты.\n\n"
+            f"{error}"
+        )
+
+        return
 
     await state.clear()
 
     await message.answer(
-        "✅ Variable сақталды.",
-        reply_markup=manage_menu(bot_id)
+        "✅ <b>Variable сақталды!</b>\n\n"
+        f"🔑 Атауы: <code>{var_key}</code>\n"
+        "🔒 Мәні: сақталды",
+        reply_markup=manage_menu(
+            bot_id
+        ),
+        parse_mode="HTML"
     )
 
 
@@ -870,20 +1580,38 @@ async def get_variable_value(
 # LOGS
 # =========================================================
 
-@dp.callback_query(F.data.startswith("logs_"))
-async def logs(callback: types.CallbackQuery):
-    if not await check_admin_callback(callback):
+@dp.callback_query(
+    F.data.startswith("logs_")
+)
+async def logs_handler(
+    callback: types.CallbackQuery
+):
+
+    if not await check_admin_callback(
+        callback
+    ):
         return
 
     try:
+
         bot_id = int(
-            callback.data.split("_", 1)[1]
+            callback.data.split(
+                "_",
+                1
+            )[1]
         )
-    except (ValueError, IndexError):
-        await callback.answer(
-            "❌ Қате bot ID.",
-            show_alert=True
+
+    except (
+        ValueError,
+        IndexError
+    ):
+
+        await answer_callback(
+            callback,
+            "❌ Бот ID қате.",
+            True
         )
+
         return
 
     bot_data = await get_owned_bot(
@@ -892,45 +1620,85 @@ async def logs(callback: types.CallbackQuery):
     )
 
     if not bot_data:
-        await callback.answer(
+
+        await answer_callback(
+            callback,
             "⛔ Бот табылмады.",
-            show_alert=True
+            True
         )
+
         return
 
-    logs_data = await database.get_logs(
-        bot_id
-    )
+    try:
+
+        logs_data = await database.get_logs(
+            bot_id,
+            30
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "get_logs error: %s",
+            error
+        )
+
+        await callback.message.answer(
+            "❌ Logs оқу кезінде қате шықты.\n\n"
+            f"{error}"
+        )
+
+        await answer_callback(
+            callback
+        )
+
+        return
 
     if not logs_data:
-        text = "📭 Log жоқ."
+
+        text = (
+            "📜 <b>Logs</b>\n\n"
+            "📭 Log жоқ."
+        )
+
     else:
+
         lines = []
 
         for item in logs_data:
+
             level = item.get(
                 "level",
                 "INFO"
             )
 
-            log_message = item.get(
+            message_text = item.get(
                 "message",
                 ""
             )
 
+            created_at = item.get(
+                "created_at",
+                ""
+            )
+
             lines.append(
-                f"[{level}] {log_message}"
+                f"<code>{created_at}</code> "
+                f"[{level}] "
+                f"{message_text}"
             )
 
         text = (
-            "📜 Latest Logs\n\n"
+            "📜 <b>Latest Logs</b>\n\n"
             + "\n".join(lines)
         )
 
-    if len(text) > 3800:
+    # Telegram maximum message size
+    if len(text) > 3900:
+
         text = (
-            "📜 Latest Logs\n\n"
-            + text[-3700:]
+            "📜 <b>Latest Logs</b>\n\n"
+            + text[-3800:]
         )
 
     keyboard = InlineKeyboardMarkup(
@@ -958,40 +1726,118 @@ async def logs(callback: types.CallbackQuery):
 
 
 # =========================================================
-# UNKNOWN TEXT
+# CANCEL
 # =========================================================
 
-@dp.message()
-async def unknown_message(message: types.Message):
-    if not await check_admin_message(message):
+@dp.message(
+    F.text == "/cancel"
+)
+async def cancel_command(
+    message: types.Message,
+    state: FSMContext
+):
+
+    if not await check_admin_message(
+        message
+    ):
         return
 
+    await state.clear()
+
     await message.answer(
-        "ℹ️ Команданы немесе мәзірдегі батырманы пайдаланыңыз.",
+        "❌ Әрекет тоқтатылды.",
         reply_markup=main_menu()
     )
 
 
 # =========================================================
-# MAIN
+# UNKNOWN MESSAGE
+# =========================================================
+
+@dp.message()
+async def unknown_message(
+    message: types.Message
+):
+
+    if not await check_admin_message(
+        message
+    ):
+        return
+
+    await message.answer(
+        "ℹ️ Түсінбедім.\n\n"
+        "/start басыңыз немесе мәзірдегі батырмаларды пайдаланыңыз.",
+        reply_markup=main_menu()
+    )
+
+
+# =========================================================
+# START APPLICATION
 # =========================================================
 
 async def main():
-    if not config.BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN Railway Variables ішінде көрсетілмеген."
+
+    logger.info(
+        "🚀 Конструктор іске қосылуда..."
+    )
+
+    try:
+
+        await database.init_db()
+
+        logger.info(
+            "✅ Database дайын"
         )
 
-    await database.init_db()
+    except Exception as error:
 
-    logging.info(
+        logger.exception(
+            "❌ Database initialization error: %s",
+            error
+        )
+
+        raise
+
+    logger.info(
         "🚀 Конструктор іске қосылды"
     )
 
-    await dp.start_polling(
-        bot
-    )
+    try:
 
+        await dp.start_polling(
+            bot
+        )
+
+    finally:
+
+        await bot.session.close()
+
+        logger.info(
+            "🛑 Конструктор тоқтатылды"
+        )
+
+
+# =========================================================
+# ENTRY POINT
+# =========================================================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    try:
+
+        asyncio.run(
+            main()
+        )
+
+    except KeyboardInterrupt:
+
+        logger.info(
+            "🛑 Process interrupted"
+        )
+
+    except Exception as error:
+
+        logger.exception(
+            "❌ Fatal error: %s",
+            error
+    )
