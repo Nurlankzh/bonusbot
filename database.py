@@ -355,6 +355,21 @@ async def delete_bot(bot_id):
             "DELETE FROM bots WHERE id = ?",
             (bot_id,)
         )
+        async def delete_code_version(bot_id, version):
+    db = await connect()
+    try:
+        cursor = await db.execute(
+            """
+            DELETE FROM code_versions
+            WHERE bot_id = ?
+            AND version = ?
+            """,
+            (bot_id, version)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
 
         await db.commit()
 
