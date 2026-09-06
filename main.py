@@ -35,16 +35,24 @@ class VarStates(StatesGroup):
 class TerminalStates(StatesGroup):
     waiting_for_command = State()
 
-# --- Middleware (Қауіпсіздік) ---
-@dp.message()
-async def admin_check_msg(message: types.Message, handler):
-    if message.from_user.id != ADMIN_ID: return
-    return await handler(message, message)
+from aiogram import BaseMiddleware
+from aiogram.types import TelegramObject
+from typing import Callable, Dict, Any, Awaitable
 
-@dp.callback_query()
-async def admin_check_cb(callback: types.CallbackQuery, handler):
-    if callback.from_user.id != ADMIN_ID: return
-    return await handler(callback, callback)
+# --- Middleware (Қауіпсіздік) ---
+class AdminMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any]
+    ) -> Any:
+        if event.from_user.id != ADMIN_ID:
+            return # Админ болмаса, бот жауап бермейді
+        return await handler(event, data)
+
+dp.message.middleware(AdminMiddleware())
+dp.callback_query.middleware(AdminMiddleware())
 
 # --- Мәзірлер ---
 def main_menu():
