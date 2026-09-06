@@ -22,6 +22,7 @@ class RunnerManager:
 
     async def start_sub_bot(self, bot_id):
         async with self.get_lock(bot_id):
+
             if bot_id in self.processes:
                 process = self.processes[bot_id]
 
@@ -36,7 +37,11 @@ class RunnerManager:
                 return False, "Бот табылмады."
 
             workspace = self.get_workspace(bot_id)
-            workspace.mkdir(parents=True, exist_ok=True)
+
+            workspace.mkdir(
+                parents=True,
+                exist_ok=True
+            )
 
             code = await database.get_latest_code(bot_id)
 
@@ -57,8 +62,13 @@ class RunnerManager:
             for key, value in variables.items():
                 env[str(key)] = str(value)
 
-            if bot.get("bot_token"):
-                env["BOT_TOKEN"] = bot["bot_token"]
+            bot_token = bot.get("bot_token")
+
+            if bot_token:
+                env["BOT_TOKEN"] = bot_token
+
+            if not env.get("BOT_TOKEN"):
+                return False, "BOT_TOKEN берілмеген."
 
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
@@ -67,7 +77,7 @@ class RunnerManager:
                 cwd=str(workspace),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                stderr=asyncio.subprocess.STDOUT
             )
 
             self.processes[bot_id] = process
@@ -84,14 +94,26 @@ class RunnerManager:
             )
 
             asyncio.create_task(
-                self._watch_process(bot_id, process)
+                self._watch_process(
+                    bot_id,
+                    process
+                )
             )
 
-            return True, f"Бот іске қосылды.\nPID: {process.pid}"
+            return True, (
+                f"Бот іске қосылды.\n"
+                f"PID: {process.pid}"
+            )
 
-    async def _watch_process(self, bot_id, process):
+    async def _watch_process(
+        self,
+        bot_id,
+        process
+    ):
         try:
+
             while True:
+
                 line = await process.stdout.readline()
 
                 if not line:
@@ -103,17 +125,19 @@ class RunnerManager:
                 ).rstrip()
 
                 if text:
+
                     await database.add_log(
                         bot_id,
                         "OUTPUT",
                         text
                     )
 
-        except Exception as e:
+        except Exception as error:
+
             await database.add_log(
                 bot_id,
                 "ERROR",
-                str(e)
+                str(error)
             )
 
         return_code = await process.wait()
@@ -126,19 +150,26 @@ class RunnerManager:
             "stopped"
         )
 
+        level = "INFO"
+
+        if return_code != 0:
+            level = "ERROR"
+
         await database.add_log(
             bot_id,
-            "ERROR" if return_code else "INFO",
+            level,
             f"Process exited with code {return_code}"
         )
 
         bot = await database.get_bot(bot_id)
 
-        if (
-            bot
-            and bot.get("auto_restart")
-            and return_code != 0
-        ):
+        if not bot:
+            return
+
+        auto_restart = bot.get("auto_restart")
+
+        if auto_restart and return_code != 0:
+
             await database.add_log(
                 bot_id,
                 "WARNING",
@@ -147,13 +178,28 @@ class RunnerManager:
 
             await asyncio.sleep(5)
 
-            await self.start_sub_bot(bot_id)
+            try:
+
+                await self.start_sub_bot(
+                    bot_id
+                )
+
+            except Exception as error:
+
+                await database.add_log(
+                    bot_id,
+                    "ERROR",
+                    f"Auto restart failed: {error}"
+                )
 
     async def stop_sub_bot(self, bot_id):
+
         async with self.get_lock(bot_id):
+
             process = self.processes.get(bot_id)
 
             if not process:
+
                 await database.update_bot_status(
                     bot_id,
                     "stopped"
@@ -162,7 +208,11 @@ class RunnerManager:
                 return False, "Бот іске қосылмаған."
 
             if process.returncode is not None:
-                self.processes.pop(bot_id, None)
+
+                self.processes.pop(
+                    bot_id,
+                    None
+                )
 
                 await database.update_bot_status(
                     bot_id,
@@ -171,18 +221,30 @@ class RunnerManager:
 
                 return False, "Бот іске қосылмаған."
 
-            process.terminate()
-
             try:
-                await asyncio.wait_for(
-                    process.wait(),
-                    timeout=10
-                )
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
 
-            self.processes.pop(bot_id, None)
+                process.terminate()
+
+                try:
+
+                    await asyncio.wait_for(
+                        process.wait(),
+                        timeout=10
+                    )
+
+                except asyncio.TimeoutError:
+
+                    process.kill()
+
+                    await process.wait()
+
+            except ProcessLookupError:
+                pass
+
+            self.processes.pop(
+                bot_id,
+                None
+            )
 
             await database.update_bot_status(
                 bot_id,
@@ -198,19 +260,44 @@ class RunnerManager:
             return True, "Бот тоқтатылды."
 
     async def restart_sub_bot(self, bot_id):
-        await self.stop_sub_bot(bot_id)
+
+        await self.stop_sub_bot(
+            bot_id
+        )
 
         await asyncio.sleep(1)
 
-        return await self.start_sub_bot(bot_id)
+        return await self.start_sub_bot(
+            bot_id
+        )
 
     def is_running(self, bot_id):
-        process = self.processes.get(bot_id)
+
+        process = self.processes.get(
+            bot_id
+        )
 
         if not process:
             return False
 
         return process.returncode is None
 
+    async def get_process_info(self, bot_id):
 
-runner = RunnerManager()
+        process = self.processes.get(
+            bot_id
+        )
+
+        if not process:
+            return None
+
+        return {
+            "pid": process.pid,
+            "running": process.returncode is None,
+            "returncode": process.returncode
+        }
+
+
+runner_manager = RunnerManager()
+
+runner = runner_manager
