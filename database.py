@@ -1,293 +1,337 @@
-import aiosqlite
 import os
-from datetime import datetime
+import aiosqlite
 import config
-
-DB_PATH = config.DATABASE_PATH
-
-
-def now():
-    return datetime.utcnow().isoformat()
 
 
 async def init_db():
-    folder = os.path.dirname(DB_PATH)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
+    directory = os.path.dirname(config.DATABASE_PATH)
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("PRAGMA foreign_keys=ON")
+    if directory:
+        os.makedirs(directory, exist_ok=True)
 
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS bots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            bot_token TEXT NOT NULL,
-            status TEXT DEFAULT 'stopped',
-            auto_restart INTEGER DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
+            CREATE TABLE IF NOT EXISTS bots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                bot_name TEXT NOT NULL,
+                bot_token TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'stopped'
+            )
         """)
 
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS code_versions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bot_id INTEGER NOT NULL,
-            version INTEGER NOT NULL,
-            code TEXT NOT NULL,
-            diff TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
-        )
+            CREATE TABLE IF NOT EXISTS code_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                version INTEGER NOT NULL,
+                code TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
         """)
 
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS env_vars (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bot_id INTEGER NOT NULL,
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            UNIQUE(bot_id, key),
-            FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
-        )
+            CREATE TABLE IF NOT EXISTS env_vars (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                var_key TEXT NOT NULL,
+                var_value TEXT NOT NULL,
+                UNIQUE(bot_id, var_key)
+            )
         """)
 
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bot_id INTEGER NOT NULL,
-            level TEXT NOT NULL,
-            message TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
-        )
-        """)
-
-        await db.execute("""
-        CREATE INDEX IF NOT EXISTS idx_code_bot
-        ON code_versions(bot_id, version)
-        """)
-
-        await db.execute("""
-        CREATE INDEX IF NOT EXISTS idx_logs_bot
-        ON logs(bot_id, id)
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
         """)
 
         await db.commit()
 
 
-async def add_bot(owner_id, name, token):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("""
-        INSERT INTO bots
-        (owner_id, name, bot_token, status, auto_restart, created_at, updated_at)
-        VALUES (?, ?, ?, 'stopped', 1, ?, ?)
-        """, (owner_id, name, token, now(), now()))
-
-        bot_id = cur.lastrowid
-
-        await db.execute("""
-        INSERT OR REPLACE INTO env_vars(bot_id, key, value)
-        VALUES (?, 'BOT_TOKEN', ?)
-        """, (bot_id, token))
+async def add_bot(user_id, name, token):
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO bots
+            (user_id, bot_name, bot_token, status)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, name, token, "stopped")
+        )
 
         await db.commit()
-        return bot_id
+        return cursor.lastrowid
 
 
-async def get_user_bots(owner_id):
-    async with aiosqlite.connect(DB_PATH) as db:
+async def get_user_bots(user_id):
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        cur = await db.execute("""
-        SELECT id, name AS bot_id_name, status, auto_restart
-        FROM bots
-        WHERE owner_id=?
-        ORDER BY id DESC
-        """, (owner_id,))
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM bots
+            WHERE user_id = ?
+            ORDER BY id DESC
+            """,
+            (user_id,)
+        )
 
-        return await cur.fetchall()
+        rows = await cursor.fetchall()
+
+        return [dict(row) for row in rows]
 
 
 async def get_bot(bot_id):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        cur = await db.execute("""
-        SELECT *
-        FROM bots
-        WHERE id=?
-        """, (bot_id,))
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM bots
+            WHERE id = ?
+            """,
+            (bot_id,)
+        )
 
-        return await cur.fetchone()
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
 
 
 async def update_bot_status(bot_id, status):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        UPDATE bots
-        SET status=?, updated_at=?
-        WHERE id=?
-        """, (status, now(), bot_id))
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE bots
+            SET status = ?
+            WHERE id = ?
+            """,
+            (status, bot_id)
+        )
 
         await db.commit()
-
-
-async def set_auto_restart(bot_id, enabled):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        UPDATE bots
-        SET auto_restart=?, updated_at=?
-        WHERE id=?
-        """, (1 if enabled else 0, now(), bot_id))
-
-        await db.commit()
-
-
-async def get_latest_code(bot_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-
-        cur = await db.execute("""
-        SELECT *
-        FROM code_versions
-        WHERE bot_id=?
-        ORDER BY version DESC
-        LIMIT 1
-        """, (bot_id,))
-
-        return await cur.fetchone()
-
-
-async def get_code_versions(bot_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-
-        cur = await db.execute("""
-        SELECT id, version, created_at
-        FROM code_versions
-        WHERE bot_id=?
-        ORDER BY version DESC
-        """, (bot_id,))
-
-        return await cur.fetchall()
-
-
-async def get_code_by_version(bot_id, version):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-
-        cur = await db.execute("""
-        SELECT *
-        FROM code_versions
-        WHERE bot_id=? AND version=?
-        LIMIT 1
-        """, (bot_id, version))
-
-        return await cur.fetchone()
 
 
 async def save_code_version(bot_id, code):
-    previous = await get_latest_code(bot_id)
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
 
-    version = 1 if not previous else previous["version"] + 1
+        cursor = await db.execute(
+            """
+            SELECT MAX(version)
+            FROM code_versions
+            WHERE bot_id = ?
+            """,
+            (bot_id,)
+        )
 
-    old_code = previous["code"] if previous else ""
+        row = await cursor.fetchone()
 
-    diff = make_diff(old_code, code)
+        current_version = row[0] or 0
+        new_version = current_version + 1
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        INSERT INTO code_versions
-        (bot_id, version, code, diff, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """, (bot_id, version, code, diff, now()))
-
-        await db.execute("""
-        UPDATE bots
-        SET updated_at=?
-        WHERE id=?
-        """, (now(), bot_id))
+        await db.execute(
+            """
+            INSERT INTO code_versions
+            (bot_id, version, code)
+            VALUES (?, ?, ?)
+            """,
+            (bot_id, new_version, code)
+        )
 
         await db.commit()
 
-    return version, diff
+        return new_version
 
 
-def make_diff(old, new):
-    import difflib
+async def get_latest_code(bot_id):
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
 
-    return "".join(
-        difflib.unified_diff(
-            old.splitlines(True),
-            new.splitlines(True),
-            fromfile="old",
-            tofile="new"
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM code_versions
+            WHERE bot_id = ?
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (bot_id,)
         )
-    )
+
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
+
+
+async def get_code_versions(bot_id):
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM code_versions
+            WHERE bot_id = ?
+            ORDER BY version DESC
+            """,
+            (bot_id,)
+        )
+
+        rows = await cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+
+async def get_code_version(bot_id, version):
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM code_versions
+            WHERE bot_id = ?
+            AND version = ?
+            """,
+            (bot_id, version)
+        )
+
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
 
 
 async def get_env_vars(bot_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
 
-        cur = await db.execute("""
-        SELECT key, value
-        FROM env_vars
-        WHERE bot_id=?
-        ORDER BY key
-        """, (bot_id,))
+        cursor = await db.execute(
+            """
+            SELECT var_key, var_value
+            FROM env_vars
+            WHERE bot_id = ?
+            ORDER BY var_key
+            """,
+            (bot_id,)
+        )
 
-        rows = await cur.fetchall()
+        rows = await cursor.fetchall()
 
-        return {row["key"]: row["value"] for row in rows}
+        return {
+            row[0]: row[1]
+            for row in rows
+        }
 
 
 async def set_env_var(bot_id, key, value):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        INSERT INTO env_vars(bot_id, key, value)
-        VALUES (?, ?, ?)
-        ON CONFLICT(bot_id, key)
-        DO UPDATE SET value=excluded.value
-        """, (bot_id, key, value))
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT INTO env_vars
+            (bot_id, var_key, var_value)
+            VALUES (?, ?, ?)
+
+            ON CONFLICT(bot_id, var_key)
+            DO UPDATE SET
+                var_value = excluded.var_value
+            """,
+            (bot_id, key, value)
+        )
 
         await db.commit()
 
 
 async def delete_env_var(bot_id, key):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        DELETE FROM env_vars
-        WHERE bot_id=? AND key=?
-        """, (bot_id, key))
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+
+        await db.execute(
+            """
+            DELETE FROM env_vars
+            WHERE bot_id = ?
+            AND var_key = ?
+            """,
+            (bot_id, key)
+        )
 
         await db.commit()
 
 
 async def add_log(bot_id, level, message):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        INSERT INTO logs(bot_id, level, message, created_at)
-        VALUES (?, ?, ?, ?)
-        """, (bot_id, level, message, now()))
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+
+        await db.execute(
+            """
+            INSERT INTO logs
+            (bot_id, level, message)
+            VALUES (?, ?, ?)
+            """,
+            (bot_id, level, message)
+        )
 
         await db.commit()
 
 
 async def get_logs(bot_id, limit=50):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        cur = await db.execute("""
-        SELECT level, message, created_at
-        FROM logs
-        WHERE bot_id=?
-        ORDER BY id DESC
-        LIMIT ?
-        """, (bot_id, limit))
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM logs
+            WHERE bot_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (bot_id, limit)
+        )
 
-        return await cur.fetchall()
+        rows = await cursor.fetchall()
+
+        result = [dict(row) for row in rows]
+
+        result.reverse()
+
+        return result
+
+
+async def delete_bot(bot_id):
+    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+
+        await db.execute(
+            "DELETE FROM code_versions WHERE bot_id = ?",
+            (bot_id,)
+        )
+
+        await db.execute(
+            "DELETE FROM env_vars WHERE bot_id = ?",
+            (bot_id,)
+        )
+
+        await db.execute(
+            "DELETE FROM logs WHERE bot_id = ?",
+            (bot_id,)
+        )
+
+        await db.execute(
+            "DELETE FROM bots WHERE id = ?",
+            (bot_id,)
+        )
+
+        await db.commit()
