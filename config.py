@@ -1,45 +1,44 @@
 import os
 
-# ============================================================
-# TELEGRAM BOT
-# ============================================================
 
-BOT_TOKEN = "8729117024:AAH68IJU9QZ5yAMaAazYzQfWRvCyf_cH1KA"
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    ""
+).strip()
 
-# ============================================================
-# ADMIN
-# ============================================================
 
-ADMIN_ID = 6303091468
+admin_id_value = os.getenv(
+    "ADMIN_ID",
+    ""
+).strip()
 
-# ============================================================
-# DATABASE
-# ============================================================
 
-DATABASE_PATH = os.getenv("DATABASE_PATH", "builder.db")
+if not admin_id_value:
+    raise RuntimeError(
+        "ADMIN_ID Railway Variables ішінде көрсетілмеген."
+    )
 
-# ============================================================
-# WORKSPACE
-# ============================================================
 
-WORKSPACE_DIR = os.getenv("WORKSPACE_DIR", "workspaces")
+try:
 
-# ============================================================
-# LIMITS
-# ============================================================
+    ADMIN_ID = int(
+        admin_id_value
+    )
 
-CHILD_TIMEOUT = int(os.getenv("CHILD_TIMEOUT", "30"))
+except ValueError:
 
-MAX_CODE_SIZE = int(
-    os.getenv("MAX_CODE_SIZE", "500000")
+    raise RuntimeError(
+        "ADMIN_ID тек сан болуы керек."
+    )
+
+
+WORKSPACE_DIR = os.getenv(
+    "WORKSPACE_DIR",
+    "/app/workspaces"
 )
 
-LOG_LIMIT = int(
-    os.getenv("LOG_LIMIT", "100")
+
+DATABASE_PATH = os.getenv(
+    "DATABASE_PATH",
+    "/app/data/database.db"
 )
-
-# ============================================================
-# CREATE WORKSPACE
-# ============================================================
-
-os.makedirs(WORKSPACE_DIR, exist_ok=True)
