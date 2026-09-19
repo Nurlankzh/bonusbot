@@ -81,6 +81,40 @@ async def owned_bot(bot_id: int, user_id: int):
     return bot_data
 
 
+async def clear_child_webhook(bot_data) -> bool:
+    """Remove a Telegram webhook so the child bot can use long polling."""
+    token = None
+
+    if isinstance(bot_data, dict):
+        token = bot_data.get("token") or bot_data.get("bot_token")
+
+    if not token:
+        logger.warning(
+            "Child bot token was not found in database record; "
+            "could not clear webhook."
+        )
+        return False
+
+    child_bot = Bot(token=token)
+
+    try:
+        await child_bot.delete_webhook(drop_pending_updates=True)
+        logger.info(
+            "Child bot webhook cleared successfully."
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "Failed to clear child bot webhook."
+        )
+        return False
+    finally:
+        try:
+            await child_bot.session.close()
+        except Exception:
+            pass
+
+
 async def safe_edit(
     message: types.Message,
     text: str,
@@ -629,6 +663,10 @@ async def start_child_handler(
             )
             return
 
+        # Telegram does not allow getUpdates while a webhook is active.
+        # Clear any old webhook before starting the child bot with polling.
+        await clear_child_webhook(data)
+
         success, result = await runner_manager.start_sub_bot(
             bot_id
         )
@@ -729,6 +767,9 @@ async def restart_child_handler(
         return
 
     try:
+        # Remove an old webhook before restarting the child bot.
+        await clear_child_webhook(data)
+
         success, result = await runner_manager.restart_sub_bot(
             bot_id
         )
@@ -1886,6 +1927,9 @@ async def main():
     )
 
     try:
+        # Master bot uses long polling, so an old webhook must be removed.
+        await bot.delete_webhook(drop_pending_updates=True)
+
         await dp.start_polling(
             bot
         )
