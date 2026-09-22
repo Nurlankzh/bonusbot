@@ -84,13 +84,15 @@ class RunnerManager:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 file_path.write_bytes(content)
 
-        # Create a small launcher that loads .env
+        # Create launcher: load .env then run bot.py as __main__
+        # (import bot would skip if __name__ == "__main__" block)
         launcher = workspace / "run.py"
         launcher.write_text(
             """import os
+import runpy
 from pathlib import Path
 
-# Load .env
+# Load .env into environment
 env_path = Path(__file__).parent / ".env"
 if env_path.exists():
     for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -100,8 +102,8 @@ if env_path.exists():
         key, _, value = line.partition("=")
         os.environ.setdefault(key.strip(), value.strip())
 
-# Run the bot
-import bot
+# Execute bot.py as main script (so start_polling / main() runs)
+runpy.run_path(str(Path(__file__).parent / "bot.py"), run_name="__main__")
 """,
             encoding="utf-8",
         )
@@ -119,14 +121,24 @@ import bot
         workspace = Path(result)
 
         try:
-            # Start process
+            # Build env for child process (token + custom vars)
+            bot_data = await database.get_bot(bot_id)
+            child_env = os.environ.copy()
+            env_vars = await database.get_env_vars(bot_id)
+            for k, v in env_vars.items():
+                child_env[str(k)] = str(v)
+            if bot_data:
+                child_env["BOT_TOKEN"] = bot_data["token"]
+                child_env["TELEGRAM_BOT_TOKEN"] = bot_data["token"]
+
             proc = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "run.py",
                 cwd=str(workspace),
+                env=child_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,  # detach from parent signals
+                start_new_session=True,
             )
 
             self.processes[bot_id] = proc
